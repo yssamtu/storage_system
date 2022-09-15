@@ -58,6 +58,17 @@ struct zdev_init_params{
     bool force_reset;
 };
 
+struct log {
+    uint64_t logical_address;
+    uint64_t physical_address;
+    struct log *prev, *next;
+};
+
+struct log_pointer {
+    struct log *log_head;
+    struct log *log_end;
+};
+
 int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device **my_dev);
 int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size);
 int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size);
