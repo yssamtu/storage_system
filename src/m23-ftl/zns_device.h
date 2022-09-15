@@ -61,10 +61,13 @@ struct zdev_init_params{
 struct log {
     uint64_t logical_address;
     uint64_t physical_address;
-    struct log *prev, *next;
+    struct log *prev;
+    struct log *next;
 };
 
-struct log_pointer {
+struct zns_info {
+    int fd;
+    int nsid;
     struct log *log_head;
     struct log *log_end;
 };
