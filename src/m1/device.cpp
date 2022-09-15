@@ -238,12 +238,12 @@ int ss_nvme_device_io_with_mdts(int fd, uint32_t nsid, uint64_t slba, uint16_t n
     while((errno == 0) && (completed_size < buf_size)) {
 	uint64_t size = buf_size-completed_size < mdts_size ? buf_size-completed_size : mdts_size;
      	int no_blocks = floor(size/lba_size);
-	memcpy(temp, buffer+(iteration*mdts_size), size);
+	memcpy(temp, (char *)buffer+(iteration*mdts_size), size);
 	if (!read)
 		errno = ss_nvme_device_write(fd, nsid, current_lba, no_blocks, temp, size);
 	if (read) {
 		errno = ss_nvme_device_read(fd,nsid,current_lba,no_blocks,temp,size);
-		memcpy(buffer+(iteration*mdts_size),temp, size);
+		memcpy((char *)buffer+(iteration*mdts_size),temp, size);
 	}
 	completed_size += size;
 	current_lba += no_blocks;
@@ -317,7 +317,7 @@ uint64_t get_mdts_size(int fd){
     //Identify MPSMIN
     void *regs;
     regs = mmap(NULL,getpagesize(),PROT_READ,MAP_SHARED,fd,0);
-    mpsmin = NVME_CAP_MPSMIN(nvme_mmio_read64(regs+0)); 
+    mpsmin = NVME_CAP_MPSMIN(nvme_mmio_read64(regs)); 
     
     size = pow(2,mpsmin) * pow(2,ctrl.mdts);
     return size;

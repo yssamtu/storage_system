@@ -24,6 +24,7 @@ SOFTWARE.
 #define STOSYS_PROJECT_ZNS_DEVICE_H
 
 #include <cstdint>
+#include <libnvme.h>
 
 extern "C"{
 //https://github.com/mplulu/google-breakpad/issues/481 - taken from here
@@ -51,7 +52,7 @@ struct user_zns_device {
     void *_private;
 };
 
-struct zdev_init_params{
+struct zdev_init_params {
     char *name;
     int log_zones;
     int gc_wmark;
@@ -67,7 +68,7 @@ struct log {
 
 struct zns_info {
     int fd;
-    int nsid;
+    unsigned nsid;
     struct log *log_head;
     struct log *log_end;
 };
