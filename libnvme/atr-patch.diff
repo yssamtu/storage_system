@@ -1,0 +1,34 @@
+diff --git a/src/libnvme.h b/src/libnvme.h
+index 00b1211..bd60d0d 100644
+--- a/src/libnvme.h
++++ b/src/libnvme.h
+@@ -20,7 +20,6 @@ extern "C" {
+ #include "nvme/filters.h"
+ #include "nvme/tree.h"
+ #include "nvme/util.h"
+-#include "nvme/log.h"
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/libnvme.map b/src/libnvme.map
+index 64c04b0..a01a8a6 100644
+--- a/src/libnvme.map
++++ b/src/libnvme.map
+@@ -247,6 +247,17 @@
+ 		nvmf_qptype_str;
+ 		nvmf_cms_str;
+ 		nvmf_connect_disc_entry;
++		nvme_zns_identify_ns;
++		nvme_zns_identify_ctrl;
++		nvme_zns_mgmt_recv;
++		nvme_first_host;
++		nvme_ns_get_csi;
++		nvme_next_host;
++		nvme_zns_append;
++		nvme_identify_ctrl_csi;
++		nvme_identify_ns_csi;
++		nvme_zns_mgmt_send;
++		nvme_open;
+ 	local:
+ 		*;
+ };
