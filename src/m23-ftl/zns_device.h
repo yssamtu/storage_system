@@ -24,7 +24,6 @@ SOFTWARE.
 #define STOSYS_PROJECT_ZNS_DEVICE_H
 
 #include <cstdint>
-#include <libnvme.h>
 
 extern "C"{
 //https://github.com/mplulu/google-breakpad/issues/481 - taken from here

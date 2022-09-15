@@ -90,7 +90,7 @@ static int write_read_lba0(struct user_zns_device *dev, void *buf, uint32_t buf_
         return ret;
     }
     printf("%u bytes read successfully on lba 0x%lx \n", buf_size, test_lba);
-    match_pattern((char*)buf, buf_size);
+    match_pattern((char *)buf, buf_size);
     return 0;
 }
 
