@@ -25,6 +25,8 @@ SOFTWARE.
 
 #include <cstdint>
 
+#define METADATA_MAP_LEN 4000
+
 extern "C" {
 //https://github.com/mplulu/google-breakpad/issues/481 - taken from here
 #define typeof __typeof__
@@ -48,7 +50,7 @@ struct user_zns_device {
     uint64_t capacity_bytes; // total user device capacity
     struct zns_device_testing_params tparams; // report back some ZNS device-level properties to the user (for testing only, this is not needed for functions
     // your own private data
-    void *_private;
+    void *_private; //Points to zns_info
 };
 
 struct zdev_init_params {
@@ -58,19 +60,32 @@ struct zdev_init_params {
     bool force_reset;
 };
 
-struct metadata {
+
+struct metadata_log_map {
+    //FIXME: Add No of blocks written as well.
     uint64_t logical_address;
     uint64_t physical_address;
-    struct metadata *prev;
-    struct metadata *next;
+    struct metadata_log_map *next;
 };
 
 struct zns_info {
+    //Fixed values
     int fd;
+    int gc_trigger;
     uint32_t nsid;
-    struct metadata *metadata_head;
-    struct metadata *metadata_end;
+    uint32_t nvm_page_size;
+    uint32_t zone_capacity;
+    uint32_t no_of_zones;
+    uint32_t no_of_log_zones;
+    uint64_t upper_logical_addr_bound;
+
+    //Log zone maintainance
+    uint32_t no_of_used_log_zones; //Keep track of used log zones
+    uint64_t curr_log_zone_starting_addr; //Point to current log zone starting address
+    struct metadata_log_map map[METADATA_LOG_LEN]; //Hashmap to store log
 };
+
+
 
 int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device **my_dev);
 int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size);
