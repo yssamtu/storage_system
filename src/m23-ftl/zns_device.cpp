@@ -80,13 +80,74 @@ int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device *
     return 0;
 }
 
-int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size)
-{
-    return -ENOSYS;
+
+
+int hash_function(uint64_t key, int index) {
+	
 }
-int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size)
-{
-    return -ENOSYS;
+
+void update_log_map(metadata_log_map map, uint64_t logical_addr, uint64_t physical_addr) {
+    int index = hash_function(logical_addr);
+
+}
+
+int lookup_log_map(metadata_log_map map, uint64_t logical_addr, uint64_t *physical_addr) {
+
+}
+
+int append_data_to_log_zone(zns_info *ptr, void *buffer, uint32_t size, uint64_t zslba, uint64_t *addr_written) {
+    int errno;
+    void *mbuffer = NULL;
+    long long mbuffer_size = 0;
+    uint32_t number_of_pages; //calc from size and page_size
+    //FIXME: Later make provision to include meta data containing lba and write size. For persistent log storage.
+    errno = nvme_zns_append(ptr->fd, ptr->nsid, ptr->zslba, number_of_pages, 0,
+                    0, 0, 0, size, buffer, mbuffer_size, mbuffer, addr_written);
+    ss_nvme_show_status(errno);
+    return errno;	
+}
+
+
+int read_data_from_nvme(zns_info *ptr, uint64_t address, void *buffer, uint32_t size) {
+    int errno;
+    void *mbuffer = NULL;
+    long long mbuffer_size = 0;
+    uint32_t number_of_pages;
+    errno = nvme_read(ptr->fd, ptr->nsid, address, number_of_pages, 0, 0, 0, 
+		    0, 0, size, buffer, mbuffer_size, mbuffer);
+    ss_nvme_show_status(errno);
+    return errno; 
+}
+
+
+int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size){
+    int errno;
+    uint64_t physical_addr;
+
+    //FIXME: Proision for contiguos block read, but not written contiguous
+    //Get physical addr mapped for the provided logical addr
+    errno = lookup_map(my_dev->_private->map, address, &physical_addr);
+    if(errno != 0)
+       return errno;
+
+
+    errno = read_data_from_nvme(my_dev->_private, physical_addr, buffer, size);
+
+    return errno;
+}
+
+
+int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size){
+    int errno;
+    uint64_t *zone_slba, *physical_page_addr;
+    
+    errno = append_data_to_log_zone(my_dec->_private, buffer, size, physical_page_addr);
+    if(errno != 0)
+        return 0;
+
+    update_ftl_map(my_dec->_private->metadata_log_map, address, physical_page_addr);
+    return errno;
+>>>>>>> Stashed changes
 }
 
 int deinit_ss_zns_device(struct user_zns_device *my_dev)
@@ -95,4 +156,6 @@ int deinit_ss_zns_device(struct user_zns_device *my_dev)
     free(my_dev);
     return -ENOSYS;
 }
+
+
 }
