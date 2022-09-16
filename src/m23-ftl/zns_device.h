@@ -25,7 +25,7 @@ SOFTWARE.
 
 #include <cstdint>
 
-#define METADATA_MAP_LEN 4000
+#define METADATA_LOG_MAP_LEN 4000
 
 extern "C" {
 //https://github.com/mplulu/google-breakpad/issues/481 - taken from here
@@ -77,13 +77,20 @@ struct zns_info {
     uint32_t zone_capacity;
     uint32_t no_of_zones;
     uint32_t no_of_log_zones;
+    //Future use
     uint64_t upper_logical_addr_bound;
 
     //Log zone maintainance
     uint32_t no_of_used_log_zones; //Keep track of used log zones
     uint64_t curr_log_zone_starting_addr; //Point to current log zone starting address
-    struct metadata_log_map map[METADATA_LOG_LEN]; //Hashmap to store log
+    struct metadata_log_map *map[METADATA_LOG_MAP_LEN]; //Hashmap to store log
 };
+
+
+int hash_function(uint64_t key);
+void update_log_map(metadata_log_map *map[METADATA_LOG_MAP_LEN], uint64_t logical_address, uint64_t physical_address);
+int lookup_log_map(metadata_log_map *map[METADATA_LOG_MAP_LEN], uint64_t logical_address, uint64_t *physical_address);
+int append_data_to_log_zone(zns_info *ptr, void *buffer, uint32_t size, uint64_t *address_written);
 
 
 

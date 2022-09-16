@@ -95,32 +95,65 @@ int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device *
 
 
 
-int hash_function(uint64_t key, int index) {
-	
+int hash_function(uint64_t key) {
+	return key%METADATA_LOG_MAP_LEN;
 }
 
-void update_log_map(metadata_log_map map, uint64_t logical_addr, uint64_t physical_addr) {
-    int index = hash_function(logical_addr);
+void update_log_map(metadata_log_map *map[METADATA_LOG_MAP_LEN], uint64_t logical_address, uint64_t physical_address) {
+    int index = hash_function(logical_address);
+    struct metadata_log_map *head, *entry;
 
+    entry = (metadata_log_map *) malloc(sizeof(metadata_log_map));
+    entry->physical_address = physical_address;
+    entry->logical_address = logical_address;
+    if(map[index] == NULL)
+        map[index] = entry;
+    else {
+        head = map[index];
+        while(head->next != NULL)
+            head = head->next;
+            head->next = entry;
+    }
 }
 
-int lookup_log_map(metadata_log_map map, uint64_t logical_addr, uint64_t *physical_addr) {
+int lookup_log_map(metadata_log_map *map[METADATA_LOG_MAP_LEN], uint64_t logical_address, uint64_t *physical_address) {
+    int index = hash_function(logical_address);
+    struct metadata_log_map *head;
+    int err;
+    err = -1;
+    head = map[index];
+    while(head != NULL) {
+        if(head->logical_address == logical_address) {
+	    *physical_address = head->physical_address;
+	    err = 0;
+	    break;
+        }
+        head = head->next;
+    }
 
+    return err;
 }
 
-int append_data_to_log_zone(zns_info *ptr, void *buffer, uint32_t size, uint64_t zslba, uint64_t *addr_written) {
+int append_data_to_log_zone(zns_info *ptr, void *buffer, uint32_t size, uint64_t *address_written) {
     int errno;
     void *mbuffer = NULL;
     long long mbuffer_size = 0;
     uint32_t number_of_pages; //calc from size and page_size
     //FIXME: Later make provision to include meta data containing lba and write size. For persistent log storage.
-    errno = nvme_zns_append(ptr->fd, ptr->nsid, ptr->zslba, number_of_pages, 0,
-                    0, 0, 0, size, buffer, mbuffer_size, mbuffer, addr_written);
-    ss_nvme_show_status(errno);
+    errno = nvme_zns_append(ptr->fd, ptr->nsid, ptr->curr_log_zone_starting_addr, number_of_pages, 0,
+                    0, 0, 0, size, buffer, mbuffer_size, mbuffer, (long long unsigned int*) address_written);
+    //ss_nvme_show_status(errno);
     return errno;	
 }
 
 
+//FIXME: Update log zone if current zone cant support current write req
+/*
+int check_update_curr_log_zone_validity(zns_info *ptr, uint32_t size) {
+    int errno;
+    if ptr
+}
+*/
 int read_data_from_nvme(zns_info *ptr, uint64_t address, void *buffer, uint32_t size) {
     int errno;
     void *mbuffer = NULL;
@@ -128,38 +161,46 @@ int read_data_from_nvme(zns_info *ptr, uint64_t address, void *buffer, uint32_t 
     uint32_t number_of_pages;
     errno = nvme_read(ptr->fd, ptr->nsid, address, number_of_pages, 0, 0, 0, 
 		    0, 0, size, buffer, mbuffer_size, mbuffer);
-    ss_nvme_show_status(errno);
+    //ss_nvme_show_status(errno);
     return errno; 
 }
 
 
 int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size){
-    int errno;
-    uint64_t physical_addr;
-
+    int err;
+    uint64_t *physical_address;
+    zns_info *info;
+    info = (zns_info *) my_dev->_private; 
     //FIXME: Proision for contiguos block read, but not written contiguous
     //Get physical addr mapped for the provided logical addr
-    errno = lookup_map(my_dev->_private->map, address, &physical_addr);
-    if(errno != 0)
-       return errno;
+    err = lookup_log_map(info->map, address, physical_address);
+    if(err != 0)
+       return err;
 
 
-    errno = read_data_from_nvme(my_dev->_private, physical_addr, buffer, size);
+    errno = read_data_from_nvme(info, *physical_address, buffer, size);
 
-    return errno;
+    return err;
 }
 
 
 int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size){
-    int errno;
-    uint64_t *zone_slba, *physical_page_addr;
-    
-    errno = append_data_to_log_zone(my_dec->_private, buffer, size, physical_page_addr);
+    int err;
+    uint64_t *physical_page_address;
+    zns_info *info;
+    info = (zns_info *) my_dev->_private;
+    /*
+    errno = check_update_curr_log_zone_validity(my_dev->_private)
     if(errno != 0)
-        return 0;
+	return 0;
+    */
 
-    update_ftl_map(my_dec->_private->metadata_log_map, address, physical_page_addr);
-    return errno;
+    err = append_data_to_log_zone(info, buffer, size, physical_page_address);
+    if(err != 0)
+        return err;
+
+    update_log_map(info->map, address, *physical_page_address);
+    return err;
 }
 
 int deinit_ss_zns_device(struct user_zns_device *my_dev)
