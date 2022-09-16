@@ -35,6 +35,10 @@ int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device *
     *my_dev = (struct user_zns_device *)calloc(1, sizeof(struct user_zns_device));
     (*my_dev)->_private = calloc(1, sizeof(struct zns_info));
     struct zns_info *info = (struct zns_info *)(*my_dev)->_private;
+    // get gc_trigger
+    info->gc_trigger = params->gc_wmark;
+    // get no_of_log_zones
+    info->no_of_log_zones = params->log_zones;
     // get fd
     info->fd = nvme_open(params->name);
     if (info->fd < 0) {
@@ -55,7 +59,7 @@ int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device *
             return 1;
         }
     }
-    // get zns_lba_size
+    // get zns_lba_size lba_size_bytes nvm_page_size
     struct nvme_id_ns ns;
     ret = nvme_identify_ns(info->fd, info->nsid, &ns);
     if (ret) {
@@ -64,12 +68,14 @@ int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device *
     }
     (*my_dev)->tparams.zns_lba_size = 1 << ns.lbaf[ns.flbas & 0xF].ds;
     (*my_dev)->lba_size_bytes = (*my_dev)->tparams.zns_lba_size;
-    // get zns_zone_capacity
+    info->nvm_page_size = (*my_dev)->tparams.zns_lba_size;
+    // get zns_zone_capacity capacity_bytes zones_capacity
     struct nvme_zns_id_ns data;
     nvme_zns_identify_ns(info->fd, info->nsid, &data);
     (*my_dev)->tparams.zns_zone_capacity = data.lbafe[ns.flbas & 0xF].zsze * (*my_dev)->tparams.zns_lba_size;
     (*my_dev)->capacity_bytes = (*my_dev)->tparams.zns_zone_capacity;
-    // get zns_num_zones
+    info->zone_capacity = (*my_dev)->tparams.zns_zone_capacity;
+    // get zns_num_zones no_of_zones
     struct nvme_zone_report zns_report;
     ret = nvme_zns_mgmt_recv(info->fd, info->nsid, 0, NVME_ZNS_ZRA_REPORT_ZONES, NVME_ZNS_ZRAS_REPORT_ALL, false, sizeof(zns_report), &zns_report);
     if (ret) {
@@ -77,6 +83,13 @@ int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device *
         return 1;
     }
     (*my_dev)->tparams.zns_num_zones = le64_to_cpu(zns_report.nr_zones);
+    info->no_of_zones = (*my_dev)->tparams.zns_num_zones;
+    // set no_of_used_log_zones
+    info->no_of_used_log_zones = 0;
+    // set curr_log_zone_starting_addr
+    info->curr_log_zone_starting_addr = 0;
+    // init upper_logical_addr_bound
+    // init map
     return 0;
 }
 
