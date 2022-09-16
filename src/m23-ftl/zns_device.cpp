@@ -147,7 +147,6 @@ int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address, void *bu
 
     update_ftl_map(my_dec->_private->metadata_log_map, address, physical_page_addr);
     return errno;
->>>>>>> Stashed changes
 }
 
 int deinit_ss_zns_device(struct user_zns_device *my_dev)
