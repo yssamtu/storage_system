@@ -25,7 +25,7 @@ SOFTWARE.
 
 #include <cstdint>
 
-extern "C"{
+extern "C" {
 //https://github.com/mplulu/google-breakpad/issues/481 - taken from here
 #define typeof __typeof__
 #define container_of(ptr, type, member) ({                      \
@@ -58,18 +58,18 @@ struct zdev_init_params {
     bool force_reset;
 };
 
-struct log {
+struct metadata {
     uint64_t logical_address;
     uint64_t physical_address;
-    struct log *prev;
-    struct log *next;
+    struct metadata *prev;
+    struct metadata *next;
 };
 
 struct zns_info {
     int fd;
-    unsigned nsid;
-    struct log *log_head;
-    struct log *log_end;
+    uint32_t nsid;
+    struct metadata *metadata_head;
+    struct metadata *metadata_end;
 };
 
 int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device **my_dev);
