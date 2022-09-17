@@ -73,7 +73,7 @@ int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device *
     struct nvme_zns_id_ns data;
     nvme_zns_identify_ns(info->fd, info->nsid, &data);
     (*my_dev)->tparams.zns_zone_capacity = data.lbafe[ns.flbas & 0xF].zsze * (*my_dev)->tparams.zns_lba_size;
-    (*my_dev)->capacity_bytes = (*my_dev)->tparams.zns_zone_capacity;
+    (*my_dev)->capacity_bytes = ((*my_dev)->tparams.zns_num_zones - (info->no_of_log_zones))*(*my_dev)->tparams.zns_zone_capacity; //FIXME: Capacity bytes is (total_no_zones - log_zones) * zone_size;
     info->zone_capacity = (*my_dev)->tparams.zns_zone_capacity;
     // get zns_num_zones no_of_zones
     struct nvme_zone_report zns_report;
@@ -90,6 +90,8 @@ int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device *
     info->curr_log_zone_starting_addr = 0;
     // init upper_logical_addr_bound
     // init map
+    //
+    info->no_of_pages_per_zone = info->zone_capacity/info->nvm_page_size;
     return 0;
 }
 
@@ -101,18 +103,28 @@ int hash_function(uint64_t key) {
 
 void update_log_map(metadata_log_map *map[METADATA_LOG_MAP_LEN], uint64_t logical_address, uint64_t physical_address) {
     int index = hash_function(logical_address);
-    struct metadata_log_map *head, *entry;
-
+    
+    struct metadata_log_map *entry;
     entry = (metadata_log_map *) malloc(sizeof(metadata_log_map));
     entry->physical_address = physical_address;
     entry->logical_address = logical_address;
+    entry->next = NULL;
+
+    //Fill in hashmap
     if(map[index] == NULL)
         map[index] = entry;
+    else if(map[index]->logical_address == logical_address)
+	map[index] = entry;
     else {
+	struct metadata_log_map *head;
         head = map[index];
-        while(head->next != NULL)
+	while(head->next != NULL) {
+	    //Break if next entry is same logical address
+	    if (head->next->logical_address == logical_address)
+                break;
             head = head->next;
-            head->next = entry;
+        }
+        head->next = entry;
     }
 }
 
@@ -138,7 +150,7 @@ int append_data_to_log_zone(zns_info *ptr, void *buffer, uint32_t size, uint64_t
     int errno;
     void *mbuffer = NULL;
     long long mbuffer_size = 0;
-    uint32_t number_of_pages; //calc from size and page_size
+    uint32_t number_of_pages = (size/ptr->nvm_page_size)-1; //calc from size and page_size
     //FIXME: Later make provision to include meta data containing lba and write size. For persistent log storage.
     errno = nvme_zns_append(ptr->fd, ptr->nsid, ptr->curr_log_zone_starting_addr, number_of_pages, 0,
                     0, 0, 0, size, buffer, mbuffer_size, mbuffer, (long long unsigned int*) address_written);
@@ -158,7 +170,7 @@ int read_data_from_nvme(zns_info *ptr, uint64_t address, void *buffer, uint32_t 
     int errno;
     void *mbuffer = NULL;
     long long mbuffer_size = 0;
-    uint32_t number_of_pages;
+    uint32_t number_of_pages = (size/ptr->nvm_page_size) - 1;
     errno = nvme_read(ptr->fd, ptr->nsid, address, number_of_pages, 0, 0, 0, 
 		    0, 0, size, buffer, mbuffer_size, mbuffer);
     //ss_nvme_show_status(errno);
@@ -166,19 +178,25 @@ int read_data_from_nvme(zns_info *ptr, uint64_t address, void *buffer, uint32_t 
 }
 
 
+
+void check_to_trigger_GC(struct zns_info *info, uint64_t last_log_append_addr) {
+    //Check if current log zone is ended, then change to next log zone
+    if((last_log_append_addr - info->curr_log_zone_starting_addr) == info->no_of_pages_per_zone - 1)
+	    info->curr_log_zone_starting_addr = last_log_append_addr + 1;
+}
+
 int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size){
     int err;
-    uint64_t *physical_address;
+    uint64_t physical_address;
     zns_info *info;
     info = (zns_info *) my_dev->_private; 
     //FIXME: Proision for contiguos block read, but not written contiguous
     //Get physical addr mapped for the provided logical addr
-    err = lookup_log_map(info->map, address, physical_address);
+    err = lookup_log_map(info->map, address, &physical_address);
     if(err != 0)
        return err;
 
-
-    errno = read_data_from_nvme(info, *physical_address, buffer, size);
+    errno = read_data_from_nvme(info, physical_address, buffer, size);
 
     return err;
 }
@@ -186,28 +204,41 @@ int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address, void *buf
 
 int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size){
     int err;
-    uint64_t *physical_page_address;
+    uint64_t physical_page_address;
     zns_info *info;
     info = (zns_info *) my_dev->_private;
-    /*
-    errno = check_update_curr_log_zone_validity(my_dev->_private)
-    if(errno != 0)
-	return 0;
-    */
-
-    err = append_data_to_log_zone(info, buffer, size, physical_page_address);
+    err = append_data_to_log_zone(info, buffer, size, &physical_page_address);
     if(err != 0)
         return err;
-
-    update_log_map(info->map, address, *physical_page_address);
+    check_to_trigger_GC(info, physical_page_address);
+    update_log_map(info->map, address, physical_page_address);
     return err;
+}
+
+void clear_entry(struct metadata_log_map *entry) {
+    if(entry == NULL)
+        return;
+    clear_entry(entry->next);
+    free(entry);
+    return;
+}
+
+void free_hashmap(struct metadata_log_map *map[METADATA_LOG_MAP_LEN]) {
+    for(int i = 0; i < METADATA_LOG_MAP_LEN; i++)
+        clear_entry(map[i]);
 }
 
 int deinit_ss_zns_device(struct user_zns_device *my_dev)
 {
-    free(my_dev->_private);
+    int err;
+    struct zns_info *info;
+    info = (zns_info *) my_dev->_private;
+    
+    //free hashmap
+    free_hashmap(info->map);
+    free(info);
     free(my_dev);
-    return -ENOSYS;
+    return err;
 }
 
 

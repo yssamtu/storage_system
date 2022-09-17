@@ -25,7 +25,7 @@ SOFTWARE.
 
 #include <cstdint>
 
-#define METADATA_LOG_MAP_LEN 4000
+#define METADATA_LOG_MAP_LEN 9999
 
 extern "C" {
 //https://github.com/mplulu/google-breakpad/issues/481 - taken from here
@@ -75,6 +75,7 @@ struct zns_info {
     uint32_t nsid;
     uint32_t nvm_page_size;
     uint32_t zone_capacity;
+    uint32_t no_of_pages_per_zone;
     uint32_t no_of_zones;
     uint32_t no_of_log_zones;
     //Future use
