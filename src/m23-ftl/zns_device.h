@@ -24,10 +24,10 @@ SOFTWARE.
 #define STOSYS_PROJECT_ZNS_DEVICE_H
 
 #include <cstdint>
-
-#define METADATA_LOG_MAP_LEN 9999
+#include <cstdbool>
 
 extern "C" {
+
 //https://github.com/mplulu/google-breakpad/issues/481 - taken from here
 #define typeof __typeof__
 #define container_of(ptr, type, member) ({                      \
@@ -60,45 +60,11 @@ struct zdev_init_params {
     bool force_reset;
 };
 
-
-struct metadata_log_map {
-    //FIXME: Add No of blocks written as well.
-    uint64_t logical_address;
-    uint64_t physical_address;
-    struct metadata_log_map *next;
-};
-
-struct zns_info {
-    //Fixed values
-    int fd;
-    int gc_trigger;
-    uint32_t nsid;
-    uint32_t nvm_page_size;
-    uint32_t zone_capacity;
-    uint32_t no_of_pages_per_zone;
-    uint32_t no_of_zones;
-    uint32_t no_of_log_zones;
-    //Future use
-    uint64_t upper_logical_addr_bound;
-
-    //Log zone maintainance
-    uint32_t no_of_used_log_zones; //Keep track of used log zones
-    uint64_t curr_log_zone_starting_addr; //Point to current log zone starting address
-    struct metadata_log_map *map[METADATA_LOG_MAP_LEN]; //Hashmap to store log
-};
-
-
-int hash_function(uint64_t key);
-void update_log_map(metadata_log_map *map[METADATA_LOG_MAP_LEN], uint64_t logical_address, uint64_t physical_address);
-int lookup_log_map(metadata_log_map *map[METADATA_LOG_MAP_LEN], uint64_t logical_address, uint64_t *physical_address);
-int append_data_to_log_zone(zns_info *ptr, void *buffer, uint32_t size, uint64_t *address_written);
-
-
-
 int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device **my_dev);
 int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size);
 int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size);
 int deinit_ss_zns_device(struct user_zns_device *my_dev);
+
 };
 
 #endif //STOSYS_PROJECT_ZNS_DEVICE_H
