@@ -24,18 +24,23 @@ SOFTWARE.
 #include <cstdlib>
 #include <cstdint>
 #include <cstdbool>
+#include <cstring>
 #include <cerrno>
 #include <libnvme.h>
 #include "zns_device.h"
 
 extern "C" {
 
-enum {METADATA_MAP_LEN = 9999};
+enum {METADATA_MAP_LEN = 9999, BUF_SIZE = 128 * 4096};
+static uint32_t used_buf_size = 0; // #lba
 
 struct metadata_map {
     //FIXME: Add No of blocks written as well.
     uint64_t logical_addr;
     unsigned long long physical_addr;
+    void *data;
+    uint32_t size;
+    uint64_t count;
     metadata_map *next;
 };
 struct zns_info {
@@ -65,14 +70,51 @@ static void check_to_trigger_GC(zns_info *info, unsigned long long last_append_a
 	    info->curr_log_zone_saddr = last_append_addr + 1;
 }
 
+static void update_cache(metadata_map *map[METADATA_MAP_LEN], metadata_map *metadata,
+                         void *buf, uint32_t size, uint32_t count_threshold)
+{
+    metadata->data = NULL;
+    metadata->size = 0;
+    if (size <= BUF_SIZE - used_buf_size) {
+        metadata->data = calloc(1, size);
+        memcpy(metadata->data, buf, size);
+        metadata->size = size;
+        used_buf_size += size;
+        return;
+    }
+    for (int i = 0; i < METADATA_MAP_LEN; ++i) {
+        for (metadata_map *head = map[i]; head; head = head->next) {
+            if (head->count < count_threshold && head->size >= size) {
+                free(head->data);
+                head->data = NULL;
+                used_buf_size -= head->size;
+                head->size = 0;
+                metadata->data = calloc(1, size);
+                memcpy(metadata->data, buf, size);
+                metadata->size = size;
+                used_buf_size += size;
+                return;
+            }
+        }
+    }
+}
+
 static int lookup_map(metadata_map *map[METADATA_MAP_LEN],
-                      uint64_t logical_addr, unsigned long long *physical_addr)
+                      uint64_t logical_addr, unsigned long long *physical_addr,
+                      void *buf, uint32_t size, bool *get)
 {
     int index = hash_function(logical_addr);
     metadata_map *head = map[index];
     while (head) {
         if (head->logical_addr == logical_addr) {
             *physical_addr = head->physical_addr;
+            ++head->count;
+            if (head->size) {
+                memcpy(buf, head->data, size);
+                *get = true;
+            } else {
+                update_cache(map, head, buf, size, head->count);
+            }
             return 0;
         }
         head = head->next;
@@ -81,33 +123,40 @@ static int lookup_map(metadata_map *map[METADATA_MAP_LEN],
 }
 
 static void update_map(metadata_map *map[METADATA_MAP_LEN],
-                       uint64_t logical_addr, unsigned long long physical_addr)
+                       uint64_t logical_addr, unsigned long long physical_addr,
+                       void *buf, uint32_t size)
 {
     int index = hash_function(logical_addr);
     //Fill in hashmap
     if (map[index] == NULL) {
-        metadata_map *entry = (metadata_map *)calloc(1, sizeof(metadata_map));
-        entry->logical_addr = logical_addr;
-        entry->physical_addr = physical_addr;
-        map[index] = entry;
+        map[index] = (metadata_map *)calloc(1, sizeof(metadata_map));
+        map[index]->logical_addr = logical_addr;
+        map[index]->physical_addr = physical_addr;
+        update_cache(map, map[index], buf, size, 1);
         return;
     }
     if (map[index]->logical_addr == logical_addr) {
         map[index]->physical_addr = physical_addr;
+        free(map[index]->data);
+        used_buf_size -= map[index]->size;
+        update_cache(map, map[index], buf, size, 1);
         return;
     }
     metadata_map *head = map[index];
     while (head->next) {
         if (head->next->logical_addr == logical_addr) {
-            head->physical_addr = physical_addr;
+            head->next->physical_addr = physical_addr;
+            free(head->next->data);
+            used_buf_size -= head->next->size;
+            update_cache(map, head->next, buf, size, 1);
             return;
         }
         head = head->next;
     }
-    metadata_map *entry = (metadata_map *)calloc(1, sizeof(metadata_map));
-    entry->logical_addr = logical_addr;
-    entry->physical_addr = physical_addr;
-    head->next = entry;
+    head->next = (metadata_map *)calloc(1, sizeof(metadata_map));
+    head->next->logical_addr = logical_addr;
+    head->next->physical_addr = physical_addr;
+    update_cache(map, head->next, buf, size, 1);
 }
 
 static int read_from_nvme(user_zns_device *my_dev, unsigned long long physical_addr,
@@ -208,10 +257,12 @@ int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address,
     zns_info *info = (zns_info *)my_dev->_private; 
     //FIXME: Proision for contiguos block read, but not written contiguous
     //Get physical addr mapped for the provided logical addr
-    int ret = lookup_map(info->map, address, &physical_addr);
+    bool get = false;
+    int ret = lookup_map(info->map, address, &physical_addr, buffer, size, &get);
     if (ret)
        return ret;
-    read_from_nvme(my_dev, physical_addr, buffer, size);
+    if (!get)
+        read_from_nvme(my_dev, physical_addr, buffer, size);
     return errno;
 }
 
@@ -224,7 +275,7 @@ int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address,
     if (ret)
         return ret;
     check_to_trigger_GC(info, physical_addr);
-    update_map(info->map, address, physical_addr);
+    update_map(info->map, address, physical_addr, buffer, size);
     return 0;
 }
 
@@ -234,6 +285,8 @@ int deinit_ss_zns_device(struct user_zns_device *my_dev)
     //free hashmap
     for (int i = 0; i < METADATA_MAP_LEN; ++i) {
         while (map[i]) {
+            if (map[i]->data)
+                free(map[i]->data);
             metadata_map *tmp = map[i];
             map[i] = map[i]->next;
             free(tmp);
