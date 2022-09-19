@@ -144,7 +144,7 @@ static int append_to_log_zone(user_zns_device *my_dev, unsigned long long *physi
     return errno;
 }
 
-int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
+int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device **my_dev)
 {
     *my_dev = (user_zns_device *)calloc(1, sizeof(user_zns_device));
     (*my_dev)->_private = calloc(1, sizeof(zns_info));
