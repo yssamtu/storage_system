@@ -33,7 +33,7 @@ extern "C" {
 
 enum {METADATA_MAP_LEN = 9999, BUF_SIZE = 128 * 4096};
 // enum {BUF_SIZE = 128 * 4096};
-// static uint32_t used_buf_size = 0; // #lba
+// static uint32_t used_buf_size = 0;
 
 struct metadata_map {
     //FIXME: Add No of blocks written as well.
