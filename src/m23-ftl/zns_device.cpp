@@ -38,6 +38,7 @@ struct metadata_map {
     unsigned long long physical_addr;
     metadata_map *next;
 };
+
 struct zns_info {
     // Fixed values
     // int num_log_zones;
@@ -45,9 +46,12 @@ struct zns_info {
     int fd;
     unsigned nsid;
     unsigned long long zone_num_pages;
+    uint32_t no_of_zones;
     // uint64_t upper_logical_addr_bound;
+ 
     // Log zone maintainance
-    // uint32_t no_of_used_log_zones; // Keep track of used log zones
+    uint32_t no_of_used_log_zones; // Keep track of used log zones
+    uint32_t no_of_log_zones;
     unsigned long long curr_log_zone_saddr; // Point to current log zone starting address
     metadata_map *map[METADATA_MAP_LEN]; // Hashmap to store log
 };
@@ -60,9 +64,12 @@ static inline int hash_function(uint64_t key)
 
 static void check_to_trigger_GC(zns_info *info, unsigned long long last_append_addr)
 {
+    //TODO: Add a check on no of log zone used, trigger gc if it reaches the condition
     //Check if current log zone is ended, then change to next log zone
-    if (last_append_addr - info->curr_log_zone_saddr == info->zone_num_pages - 1)
+    if (last_append_addr - info->curr_log_zone_saddr == info->zone_num_pages - 1) {
+	    info->no_of_used_log_zones ++;
 	    info->curr_log_zone_saddr = last_append_addr + 1;
+    }
 }
 
 static int lookup_map(metadata_map *map[METADATA_MAP_LEN],
@@ -187,6 +194,8 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
         return ret;
     }
     (*my_dev)->tparams.zns_num_zones = le64_to_cpu(zns_report.nr_zones);
+    info->no_of_zones = (*my_dev)->tparams.zns_num_zones;
+    
     // set zone_num_pages
     nvme_zns_id_ns data;
     nvme_zns_identify_ns(info->fd, info->nsid, &data);
@@ -195,8 +204,9 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
     (*my_dev)->tparams.zns_zone_capacity = info->zone_num_pages *
                                            (*my_dev)->tparams.zns_lba_size;
     // set capacity_bytes = #zone * zone_capacity
-    (*my_dev)->capacity_bytes = (*my_dev)->tparams.zns_num_zones *
+    (*my_dev)->capacity_bytes = ((*my_dev)->tparams.zns_num_zones - params->log_zones) *
                                 (*my_dev)->tparams.zns_zone_capacity;
+    info->no_of_log_zones = params->log_zones;
     // init upper_logical_addr_bound
     return 0;
 }
@@ -243,12 +253,4 @@ int deinit_ss_zns_device(struct user_zns_device *my_dev)
     free(my_dev);
     return 0;
 }
-
-//FIXME: Update log zone if current zone cant support current write req
-/*
-static int check_update_curr_log_zone_validity(zns_info *info, uint32_t size) {
-    if info
-}
-*/
-
 }
