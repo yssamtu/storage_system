@@ -31,7 +31,6 @@ SOFTWARE.
 
 extern "C" {
 
-enum {METADATA_MAP_LEN = 9999, BUF_SIZE = 128 * 4096};
 // enum {BUF_SIZE = 128 * 4096};
 // static uint32_t used_buf_size = 0;
 
@@ -47,10 +46,11 @@ struct metadata_map {
 
 struct zns_info {
     // Fixed values
-    // int num_log_zones;
-    // int gc_trigger;
     int fd;
     unsigned nsid;
+    int num_log_zones;
+    int num_data_zones;
+    int gc_trigger;
     unsigned long long zone_num_pages;
     uint32_t no_of_zones;
     // uint64_t upper_logical_addr_bound;
@@ -58,14 +58,15 @@ struct zns_info {
     // Log zone maintainance
     uint32_t no_of_used_log_zones; // Keep track of used log zones
     uint32_t no_of_log_zones;
+    
     unsigned long long curr_log_zone_saddr; // Point to current log zone starting address
-    metadata_map *map[METADATA_MAP_LEN]; // Hashmap to store log
+    metadata_map **map; // Hashmap to store log
 };
 
 
-static inline int hash_function(uint64_t key)
+static inline int hash_function(uint64_t key, uint32_t zns_zone_capacity)
 {
-	return key % METADATA_MAP_LEN;
+	return key / zns_zone_capacity;
 }
 
 static void check_to_trigger_GC(zns_info *info, unsigned long long last_append_addr)
@@ -73,12 +74,12 @@ static void check_to_trigger_GC(zns_info *info, unsigned long long last_append_a
     //TODO: Add a check on no of log zone used, trigger gc if it reaches the condition
     //Check if current log zone is ended, then change to next log zone
     if (last_append_addr - info->curr_log_zone_saddr == info->zone_num_pages - 1) {
-	    info->no_of_used_log_zones ++;
+	    ++info->no_of_used_log_zones;
 	    info->curr_log_zone_saddr = last_append_addr + 1;
     }
 }
 
-// static void update_cache(metadata_map *map[METADATA_MAP_LEN], metadata_map *metadata,
+// static void update_cache(zns_info *info, metadata_map *metadata,
 //                          void *buf, uint32_t size, uint32_t count_threshold)
 // {
 //     metadata->data = NULL;
@@ -90,8 +91,8 @@ static void check_to_trigger_GC(zns_info *info, unsigned long long last_append_a
 //         used_buf_size += size;
 //         return;
 //     }
-//     for (int i = 0; i < METADATA_MAP_LEN; ++i) {
-//         for (metadata_map *head = map[i]; head; head = head->next) {
+//     for (int i = 0; i < info->num_data_zones; ++i) {
+//         for (metadata_map *head = info->map[i]; head; head = head->next) {
 //             if (head->count < count_threshold && head->size >= size) {
 //                 free(head->data);
 //                 head->data = NULL;
@@ -107,14 +108,15 @@ static void check_to_trigger_GC(zns_info *info, unsigned long long last_append_a
 //     }
 // }
 
-// static int lookup_map(metadata_map *map[METADATA_MAP_LEN],
+// static int lookup_map(user_zns_device *my_dev,
 //                       uint64_t logical_addr, unsigned long long *physical_addr,
 //                       void *buf, uint32_t size, bool *get)
-static int lookup_map(metadata_map *map[METADATA_MAP_LEN],
+static int lookup_map(user_zns_device *my_dev,
                       uint64_t logical_addr, unsigned long long *physical_addr)
 {
-    int index = hash_function(logical_addr);
-    metadata_map *head = map[index];
+    int index = hash_function(logical_addr, my_dev->tparams.zns_zone_capacity);
+    zns_info *info = ((zns_info *)my_dev->_private);
+    metadata_map *head = info->map[index];
     while (head) {
         if (head->logical_addr == logical_addr) {
             *physical_addr = head->physical_addr;
@@ -123,7 +125,7 @@ static int lookup_map(metadata_map *map[METADATA_MAP_LEN],
             //     memcpy(buf, head->data, size);
             //     *get = true;
             // } else {
-            //     update_cache(map, head, buf, size, head->count);
+            //     update_cache(info, head, buf, size, head->count);
             // }
             return 0;
         }
@@ -132,26 +134,28 @@ static int lookup_map(metadata_map *map[METADATA_MAP_LEN],
     return 1;
 }
 
-// static void update_map(metadata_map *map[METADATA_MAP_LEN],
+// static void update_map(user_zns_device *my_dev,
 //                        uint64_t logical_addr, unsigned long long physical_addr,
 //                        void *buf, uint32_t size)
-static void update_map(metadata_map *map[METADATA_MAP_LEN],
+static void update_map(user_zns_device *my_dev,
                        uint64_t logical_addr, unsigned long long physical_addr)
 {
-    int index = hash_function(logical_addr);
+    int index = hash_function(logical_addr, my_dev->tparams.zns_zone_capacity);
+    zns_info *info = ((zns_info *)my_dev->_private);
+    metadata_map **map = info->map;
     //Fill in hashmap
     if (map[index] == NULL) {
         map[index] = (metadata_map *)calloc(1, sizeof(metadata_map));
         map[index]->logical_addr = logical_addr;
         map[index]->physical_addr = physical_addr;
-        // update_cache(map, map[index], buf, size, 1);
+        // update_cache(info, map[index], buf, size, 1);
         return;
     }
     if (map[index]->logical_addr == logical_addr) {
         map[index]->physical_addr = physical_addr;
         // free(map[index]->data);
         // used_buf_size -= map[index]->size;
-        // update_cache(map, map[index], buf, size, 1);
+        // update_cache(info, map[index], buf, size, 1);
         return;
     }
     metadata_map *head = map[index];
@@ -160,7 +164,7 @@ static void update_map(metadata_map *map[METADATA_MAP_LEN],
             head->next->physical_addr = physical_addr;
             // free(head->next->data);
             // used_buf_size -= head->next->size;
-            // update_cache(map, head->next, buf, size, 1);
+            // update_cache(info, head->next, buf, size, 1);
             return;
         }
         head = head->next;
@@ -168,7 +172,7 @@ static void update_map(metadata_map *map[METADATA_MAP_LEN],
     head->next = (metadata_map *)calloc(1, sizeof(metadata_map));
     head->next->logical_addr = logical_addr;
     head->next->physical_addr = physical_addr;
-    // update_cache(map, head->next, buf, size, 1);
+    // update_cache(info, head->next, buf, size, 1);
 }
 
 static int read_from_nvme(user_zns_device *my_dev, unsigned long long physical_addr,
@@ -204,9 +208,9 @@ int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device *
     (*my_dev)->_private = calloc(1, sizeof(zns_info));
     zns_info *info = (zns_info *)(*my_dev)->_private;
     // set num_log_zones
-    // info->num_log_zones = params->log_zones;
+    info->num_log_zones = params->log_zones;
     // set gc_trigger
-    // info->gc_trigger = params->gc_wmark;
+    info->gc_trigger = params->gc_wmark;
     // set fd
     info->fd = nvme_open(params->name);
     if (info->fd < 0) {
@@ -249,6 +253,10 @@ int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device *
     }
     (*my_dev)->tparams.zns_num_zones = le64_to_cpu(zns_report.nr_zones);
     info->no_of_zones = (*my_dev)->tparams.zns_num_zones;
+    // set num_data_zones = zns_num_zones - num_log_zones
+    info->num_data_zones = (*my_dev)->tparams.zns_num_zones - info->num_log_zones;
+    // set map's size = num_data_zones
+    info->map = (metadata_map **)calloc(info->num_data_zones, sizeof(metadata_map *));
     
     // set zone_num_pages
     nvme_zns_id_ns data;
@@ -261,6 +269,7 @@ int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device *
     (*my_dev)->capacity_bytes = ((*my_dev)->tparams.zns_num_zones - params->log_zones) *
                                 (*my_dev)->tparams.zns_zone_capacity;
     info->no_of_log_zones = params->log_zones;
+    (*my_dev)->capacity_bytes = info->num_data_zones * (*my_dev)->tparams.zns_zone_capacity;
     // init upper_logical_addr_bound
     return 0;
 }
@@ -269,12 +278,11 @@ int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address,
                      void *buffer, uint32_t size)
 {
     unsigned long long physical_addr = 0;
-    zns_info *info = (zns_info *)my_dev->_private; 
     //FIXME: Proision for contiguos block read, but not written contiguous
     //Get physical addr mapped for the provided logical addr
     // bool get = false;
-    // int ret = lookup_map(info->map, address, &physical_addr, buffer, size, &get);
-    int ret = lookup_map(info->map, address, &physical_addr);
+    // int ret = lookup_map(my_dev, address, &physical_addr, buffer, size, &get);
+    int ret = lookup_map(my_dev, address, &physical_addr);
     if (ret)
        return ret;
     // if (!get)
@@ -291,16 +299,17 @@ int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address,
     if (ret)
         return ret;
     check_to_trigger_GC(info, physical_addr);
-    // update_map(info->map, address, physical_addr, buffer, size);
-    update_map(info->map, address, physical_addr);
+    // update_map(my_dev, address, physical_addr, buffer, size);
+    update_map(my_dev, address, physical_addr);
     return 0;
 }
 
 int deinit_ss_zns_device(struct user_zns_device *my_dev)
 {
-    metadata_map **map = ((zns_info *)my_dev->_private)->map;
+    zns_info *info = (zns_info *)my_dev->_private;
+    metadata_map **map = info->map;
     //free hashmap
-    for (int i = 0; i < METADATA_MAP_LEN; ++i) {
+    for (int i = 0; i < info->num_data_zones; ++i) {
         while (map[i]) {
             // if (map[i]->data)
             //     free(map[i]->data);
@@ -309,6 +318,7 @@ int deinit_ss_zns_device(struct user_zns_device *my_dev)
             free(tmp);
         }
     }
+    free(map);
     free(my_dev->_private);
     free(my_dev);
     return 0;
