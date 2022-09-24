@@ -44,12 +44,19 @@ struct metadata_map {
     metadata_map *next;
 };
 
+struct log_zone_info {
+    unsigned long long num_valid_pages; // counter
+    // metadata_map **metadata; // which map data in this log zone
+    uint32_t *log_zone_index;
+    unsigned long long write_index; // like write pointer
+};
+
 struct zns_info {
     // Fixed values
     int fd;
     unsigned nsid;
     int num_log_zones;
-    int num_data_zones;
+    uint32_t num_data_zones;
     int gc_trigger;
     unsigned long long zone_num_pages;
     // uint64_t upper_logical_addr_bound;
@@ -58,6 +65,11 @@ struct zns_info {
     uint32_t no_of_used_log_zones; // Keep track of used log zones
     unsigned long long curr_log_zone_saddr; // Point to current log zone starting address
     metadata_map **map; // Hashmap to store log
+    log_zone_info *log_zones_info;
+    uint32_t *used_log_zones_list; // let the new log zone at the end of the array
+    uint32_t curr_used_log_zone_index; // the index of used_log_zones_list, which is equal to curr_log_zone_saddr / zns_zone_capacity
+    uint32_t *free_zones_list; // use free() and calloc() to change size dynamically
+
 };
 
 
@@ -66,7 +78,7 @@ static inline int hash_function(uint64_t key, uint32_t zns_zone_capacity)
 	return key / zns_zone_capacity;
 }
 
-static void check_to_trigger_GC(zns_info *info, unsigned long long last_append_addr)
+static void trigger_GC(zns_info *info, unsigned long long last_append_addr)
 {
     //TODO: Add a check on no of log zone used, trigger gc if it reaches the condition
     //Check if current log zone is ended, then change to next log zone
@@ -131,25 +143,64 @@ static int lookup_map(user_zns_device *my_dev,
     return 1;
 }
 
+static void update_curr_used_log_zone(zns_info *info, uint32_t num_lba)
+{
+    log_zone_info *log_zone = &info->log_zones_info[info->curr_used_log_zone_index];
+    if (log_zone->write_index + num_lba >= info->zone_num_pages) {
+        uint32_t curr_zone_num_lba = info->zone_num_pages - log_zone->write_index;
+        log_zone->write_index += curr_zone_num_lba;
+        log_zone->num_valid_pages += curr_zone_num_lba;
+        ++info->curr_used_log_zone_index;
+        if (info->curr_used_log_zone_index == (uint32_t)info->num_log_zones) {
+            --info->curr_used_log_zone_index;
+            // move current log_zone info to freed zone info place
+            log_zone->write_index = 0;
+            log_zone->num_valid_pages = 0;
+            // memset(log_zone->metadata, (int)NULL, info->zone_num_pages);
+            memset(log_zone->log_zone_index, -1, info->num_log_zones);
+        }
+        log_zone =  &info->log_zones_info[info->curr_used_log_zone_index];
+        log_zone->write_index += num_lba - curr_zone_num_lba;
+        log_zone->num_valid_pages += num_lba - curr_zone_num_lba;
+    } else {
+        log_zone->write_index += num_lba;
+        log_zone->num_valid_pages += num_lba;
+    }
+}
+
 // static void update_map(user_zns_device *my_dev,
 //                        uint64_t logical_addr, unsigned long long physical_addr,
 //                        void *buf, uint32_t size)
-static void update_map(user_zns_device *my_dev,
-                       uint64_t logical_addr, unsigned long long physical_addr)
+static void update_map_and_log_info(user_zns_device *my_dev,
+                       uint64_t logical_addr, unsigned long long physical_addr,
+                       uint32_t num_lba)
 {
     int index = hash_function(logical_addr, my_dev->tparams.zns_zone_capacity);
     zns_info *info = ((zns_info *)my_dev->_private);
     metadata_map **map = info->map;
+    log_zone_info *log_zone = &info->log_zones_info[info->curr_used_log_zone_index];
     //Fill in hashmap
     if (map[index] == NULL) {
         map[index] = (metadata_map *)calloc(1, sizeof(metadata_map));
         map[index]->logical_addr = logical_addr;
         map[index]->physical_addr = physical_addr;
+        // log_zone->metadata[log_zone->write_index] = map[index];
+        log_zone->log_zone_index[log_zone->write_index] = index;
+        update_curr_used_log_zone(info, num_lba);
         // update_cache(info, map[index], buf, size, 1);
         return;
     }
     if (map[index]->logical_addr == logical_addr) {
+        // for (unsigned long long i = 0; i < log_zone->write_index; ++i) {
+        //     if (log_zone->metadata[i] == map[index]) {
+        //         log_zone->metadata[i] = NULL;
+        //         break;
+        //     }
+        // }
         map[index]->physical_addr = physical_addr;
+        // log_zone->metadata[log_zone->write_index] = map[index];
+        log_zone->log_zone_index[log_zone->write_index] = index;
+        update_curr_used_log_zone(info, num_lba);
         // free(map[index]->data);
         // used_buf_size -= map[index]->size;
         // update_cache(info, map[index], buf, size, 1);
@@ -158,7 +209,16 @@ static void update_map(user_zns_device *my_dev,
     metadata_map *head = map[index];
     while (head->next) {
         if (head->next->logical_addr == logical_addr) {
+            // for (unsigned long long i = 0; i < log_zone->write_index; ++i) {
+            //     if (log_zone->metadata[i] == head->next) {
+            //         log_zone->metadata[i] = NULL;
+            //         break;
+            //     }
+            // }
             head->next->physical_addr = physical_addr;
+            // log_zone->metadata[log_zone->write_index] = head->next;
+            log_zone->log_zone_index[log_zone->write_index] = index;
+            update_curr_used_log_zone(info, num_lba);
             // free(head->next->data);
             // used_buf_size -= head->next->size;
             // update_cache(info, head->next, buf, size, 1);
@@ -169,14 +229,15 @@ static void update_map(user_zns_device *my_dev,
     head->next = (metadata_map *)calloc(1, sizeof(metadata_map));
     head->next->logical_addr = logical_addr;
     head->next->physical_addr = physical_addr;
+    // log_zone->metadata[log_zone->write_index] = head->next;
+    log_zone->log_zone_index[log_zone->write_index] = index;
+    update_curr_used_log_zone(info, num_lba);
     // update_cache(info, head->next, buf, size, 1);
 }
 
 static int read_from_nvme(user_zns_device *my_dev, unsigned long long physical_addr,
                           void *buffer, uint32_t size)
 {
-    // void *metadata = NULL;
-    // unsigned metadata_len = 0;
     unsigned short number_of_pages = size / my_dev->tparams.zns_lba_size - 1;
     zns_info *info = (zns_info *)my_dev->_private;
     nvme_read(info->fd, info->nsid, physical_addr, number_of_pages,
@@ -188,8 +249,6 @@ static int read_from_nvme(user_zns_device *my_dev, unsigned long long physical_a
 static int append_to_log_zone(user_zns_device *my_dev, unsigned long long *physical_addr,
                               void *buffer, uint32_t size)
 {
-    // void *metadata = NULL;
-    // unsigned metadata_len = 0;
     unsigned short number_of_pages = size / my_dev->tparams.zns_lba_size - 1; //calc from size and page_size
     //FIXME: Later make provision to include meta data containing lba and write size. For persistent log storage.
     zns_info *info = (zns_info *)my_dev->_private;
@@ -253,11 +312,24 @@ int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device *
     info->num_data_zones = (*my_dev)->tparams.zns_num_zones - info->num_log_zones;
     // set map's size = num_data_zones
     info->map = (metadata_map **)calloc(info->num_data_zones, sizeof(metadata_map *));
-    
+    // set used_log_zones_list
+    info->used_log_zones_list = (uint32_t *)calloc(info->num_log_zones, sizeof(uint32_t));
+    for (int i = 0; i < info->num_log_zones; ++i)
+        info->used_log_zones_list[i] = i;
+    // set free_zones_list
+    info->free_zones_list = (uint32_t *)calloc(info->num_data_zones, sizeof(uint32_t));
+    for (uint32_t i = info->num_log_zones; i < (*my_dev)->tparams.zns_num_zones; ++i)
+        info->free_zones_list[i - info->num_log_zones] = i;
     // set zone_num_pages
     nvme_zns_id_ns data;
     nvme_zns_identify_ns(info->fd, info->nsid, &data);
     info->zone_num_pages = data.lbafe[ns.flbas & 0xF].zsze;
+    // set log_zones_info
+    info->log_zones_info = (log_zone_info *)calloc(info->num_log_zones, sizeof(log_zone_info));
+    // for (int i = 0; i < info->num_log_zones; ++i)
+    //     info->log_zones_info[i].metadata = (metadata_map **)calloc(info->zone_num_pages, sizeof(metadata_map *));
+    for (int i = 0; i < info->num_log_zones; ++i)
+        info->log_zones_info[i].log_zone_index = (uint32_t *)calloc(info->zone_num_pages, sizeof(uint32_t));
     // set zns_zone_capacity = #page_per_zone * zone_size
     (*my_dev)->tparams.zns_zone_capacity = info->zone_num_pages *
                                            (*my_dev)->tparams.zns_lba_size;
@@ -291,9 +363,9 @@ int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address,
     int ret = append_to_log_zone(my_dev, &physical_addr, buffer, size);
     if (ret)
         return ret;
-    check_to_trigger_GC(info, physical_addr);
     // update_map(my_dev, address, physical_addr, buffer, size);
-    update_map(my_dev, address, physical_addr);
+    update_map_and_log_info(my_dev, address, physical_addr, size / my_dev->tparams.zns_lba_size);
+    trigger_GC(info, physical_addr);
     return 0;
 }
 
@@ -302,7 +374,7 @@ int deinit_ss_zns_device(struct user_zns_device *my_dev)
     zns_info *info = (zns_info *)my_dev->_private;
     metadata_map **map = info->map;
     //free hashmap
-    for (int i = 0; i < info->num_data_zones; ++i) {
+    for (uint32_t i = 0; i < info->num_data_zones; ++i) {
         while (map[i]) {
             // if (map[i]->data)
             //     free(map[i]->data);
@@ -312,8 +384,16 @@ int deinit_ss_zns_device(struct user_zns_device *my_dev)
         }
     }
     free(map);
+    // for (int i = 0; i < info->num_log_zones; ++i)
+    //     free(info->log_zones_info[i].metadata);
+    for (int i = 0; i < info->num_log_zones; ++i)
+        free(info->log_zones_info[i].log_zone_index);
+    free(info->log_zones_info);
+    free(info->used_log_zones_list);
+    free(info->free_zones_list);
     free(my_dev->_private);
     free(my_dev);
     return 0;
 }
+
 }
