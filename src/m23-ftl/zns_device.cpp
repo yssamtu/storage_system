@@ -147,7 +147,6 @@ static void check_to_change_log_zone(zns_info *info, unsigned long long last_app
     //Check if current log zone is ended, then change to next free log zone; FIXME
     if (last_append_addr - info->curr_log_zone->physical_zone_saddr < info->zns_pages_per_zone - 1)
 	    return;
-    printf("Here waiting\n");        
     pthread_mutex_lock(&info->zones_list_lock); //Lock for changing used_log_zones_list and accessing free zones list;
 	    if(!info->used_log_zones_list)
                 info->used_log_zones_list = info->curr_log_zone;
@@ -159,14 +158,11 @@ static void check_to_change_log_zone(zns_info *info, unsigned long long last_app
 	    }
 	    info->no_of_used_log_zones++;
     pthread_mutex_unlock(&info->zones_list_lock);
-    printf("Here done\n");
 	
       //FIXME: Change the busy wait
-      printf("Waiting to free\n");
       while(info->no_of_used_log_zones == info->no_log_zones) {
            continue;
       }
-      printf("Freed\n");
 
 
        //Dequeue from free_zone to curr_log_zone;
@@ -241,7 +237,6 @@ void *gc_thread(void *info_ptr) {
 	    ptr->block_ptr = free_zone;
 	pthread_mutex_unlock(&ptr->logical_block_lock);
 
-	printf("Exec12\n");
 	if(old_zone)
 	    old_zone->num_valid_pages = 0;
 	pthread_mutex_lock(&info->zones_list_lock);
@@ -258,31 +253,25 @@ void *gc_thread(void *info_ptr) {
 	        head = old_zone;
 	    }
         }
-	//Reset if used log zone reference is zero
-	head = info->used_log_zones_list;
-	while(head) {
-	    if(head->num_valid_pages == 0) {
+
+	//FIXME: Remove zone from used_log_zones_list if valid_page is zero and add that zone to free_zones_list
+	//Reset if used log zone : if valid pages is reference is zero
+	zone_info *copy = info->used_log_zones_list, *p1 = info->used_log_zones_list;
+	bool flag = false;
+	while(p1) {
+	    if(p1->num_valid_pages == 0) {
 	    	//reset zone
 		nvme_zns_mgmt_send(info->fd, info->nsid, head->physical_zone_saddr, false,
                                  NVME_ZNS_ZSA_RESET, 0, NULL);
-		//append to free zones list
-		zone_info *temp = info->free_zones_list;
-        	if(temp) {
-            	   while(temp->chain)
-                       temp = temp->chain;
-                   temp->chain = head;
-                } else {
-                   temp = head;
-                }
-		info->no_of_used_log_zones--;
-	    }
-	    head = head->chain;
+	
+		//Remove from used_log_zones
+		    
+		//Append to free zones	
+	     }
 	}
-
 	pthread_mutex_unlock(&info->zones_list_lock);
 	
 	index = (index + 1) % info->data_zones_count;
-        printf("Exec\n");
     }
     return NULL;
 }
@@ -589,9 +578,12 @@ int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address,
     zns_info *info = (zns_info *)my_dev->_private;
     int ret = append_to_log_zone(info, &physical_addr, buffer, size);
     if (ret)
-        return ret; 
+        return ret;
+    //printf("Wait1\n");    
     update_map(info, address, physical_addr);
+    //printf("Wait2\n %d",info->no_of_used_log_zones);
     check_to_change_log_zone(info, physical_addr);
+    //printf("Wait3\n");
     return 0;
 }
 
