@@ -26,6 +26,7 @@ SOFTWARE.
 #include <cstdbool>
 #include <cstring>
 #include <cerrno>
+#include <unistd.h>
 #include <pthread.h>
 #include <libnvme.h>
 #include "zns_device.h"
@@ -87,6 +88,7 @@ struct zns_info {
     logical_block_map **map; // Page mapped hashmap for log zone
 
     //Free zones array
+    uint32_t free_zones_count;
     zone_info *free_zones_list;
 };
 
@@ -147,6 +149,7 @@ void decrement_zone_valid_page_counter(zone_info *log)
     pthread_mutex_unlock(&log->page_counter_lock);
 }
 
+
 //Change this func
 static void check_to_change_log_zone(zns_info *info, unsigned long long last_append_addr)
 {
@@ -154,27 +157,85 @@ static void check_to_change_log_zone(zns_info *info, unsigned long long last_app
     //Check if current log zone is ended, then change to next free log zone; FIXME
     if (last_append_addr - info->curr_log_zone->physical_zone_saddr < info->zns_pages_per_zone - 1)
 	    return;
+
     pthread_mutex_lock(&info->zones_list_lock); //Lock for changing used_log_zones_list and accessing free zones list;
-    if (!info->used_log_zones_list) {
+    if (info->used_log_zones_list == NULL) {
             info->used_log_zones_list = info->curr_log_zone;
     } else {
         zone_info *head = info->used_log_zones_list;
-        while(head->chain)
+        while(head->chain != NULL)
             head = head->chain;
         head->chain = info->curr_log_zone;
     }
+    info->curr_log_zone = NULL;
     ++info->no_of_used_log_zones;
     pthread_mutex_unlock(&info->zones_list_lock);
 	
+    printf("Waiting\n");
     while (info->no_of_used_log_zones == info->no_log_zones)
         continue;
+    printf("Done waiting\n");
 
     //Dequeue from free_zone to curr_log_zone;
+    while(info->curr_log_zone == NULL) {
     pthread_mutex_lock(&info->zones_list_lock);
+    if (info->free_zones_count <= 1) {
+    	pthread_mutex_unlock(&info->zones_list_lock);
+	//Sleep for some time
+	usleep(100);
+	continue;
+    }
     info->curr_log_zone = info->free_zones_list;
     info->free_zones_list = info->free_zones_list->chain;
     info->curr_log_zone->chain = NULL;
+    info->free_zones_count--;
     pthread_mutex_unlock(&info->zones_list_lock);
+    break;
+    }
+
+    if(info->curr_log_zone == NULL) {
+       printf("WARNING\n\n\n");
+    }
+}
+
+
+void remove_log_zone_to_free_zone(zns_info *info) {
+        zone_info *tmp = info->used_log_zones_list, *prev = NULL, *sup;
+        while(tmp != NULL) {
+            bool flag = false;
+            if(tmp->num_valid_pages == 0) {
+                //reset zone
+                nvme_zns_mgmt_send(info->fd, info->nsid, tmp->physical_zone_saddr, false,
+                                 NVME_ZNS_ZSA_RESET, 0, NULL);
+
+                //Remove from used_log_zones
+                info->no_of_used_log_zones--;
+                flag = true;
+                sup = tmp; //Mark tmp to sup
+                tmp = tmp->chain; //Move tmp to next
+                sup->chain = NULL; //Disconnect ptr chain
+                //Disconnect ptr from used log zone list
+                if(prev == NULL)
+                    info->used_log_zones_list = tmp;
+                else
+                    prev->chain = tmp;
+
+                //Append sup to free zones      
+                zone_info *itr = info->free_zones_list;
+                if(itr) {
+                    while(itr->chain)
+                        itr = itr->chain;
+                    itr->chain = sup;
+                } else {
+                    info->free_zones_list = sup;
+                }
+		info->free_zones_count++;
+            }
+            if(!flag) {
+                prev = tmp;
+                tmp = tmp->chain;
+            }
+        }
 }
 
 void merge(zns_info *info, logical_block_map *map, zone_info *new_zone)
@@ -183,40 +244,51 @@ void merge(zns_info *info, logical_block_map *map, zone_info *new_zone)
     	logpage_map *ptr = map->log_head;
         bool flag = false;
         uint64_t paddr;
-        while (ptr) {
+        while (ptr != NULL) {
             if (ptr->logical_addr == map->logical_block_saddr + offset) {
                 paddr = ptr->physical_addr;
                 decrement_zone_valid_page_counter(ptr->log_ptr);
                 flag = true;
                 break;
 	        }
-	        ptr = ptr->next;
+	    ptr = ptr->next;
 	}
 	
 	//Get block
-	if((!flag)&&(map->block_ptr)){
+	if((!flag) && (map->block_ptr != NULL)){
 	    flag = true;
 	    paddr = map->block_ptr->physical_zone_saddr + offset;
 	}
 
 	void *buffer;
 	buffer = (void *)calloc(1,info->zns_page_size);
+	
 	//Do nvme read on paddr
 	if(flag) {
             read_from_nvme(info, paddr, buffer, info->zns_page_size);
-	    //Do nvme append new_zone->saddr
-            append_to_zone(info, new_zone->physical_zone_saddr, NULL, buffer, info->zns_page_size);
 	}
-	free(buffer);
+	//Do nvme append new_zone->saddr; Write invalid pages as well!
+        append_to_zone(info, new_zone->physical_zone_saddr, NULL, buffer, info->zns_page_size);
 	increment_zone_valid_page_counter(new_zone);
+    
+    	free(buffer);
     }    
+    
+    //Free log_head and block_ptr of the logical block
     logpage_map *ptr = map->log_head;
-    while(ptr) {
+    while(ptr != NULL) {
        logpage_map *tmp = ptr;
        ptr = ptr->next;
        free(tmp);
     }
     map->log_head = NULL;
+
+    //Zero the old block zone and change to new zone
+    if (map->block_ptr != NULL) {
+	nvme_zns_mgmt_send(info->fd, info->nsid, map->block_ptr->physical_zone_saddr, false,
+                                 NVME_ZNS_ZSA_RESET, 0, NULL);
+        map->block_ptr->num_valid_pages = 0;
+    }
     map->block_ptr = new_zone;
 }
 
@@ -228,20 +300,22 @@ void *gc_thread(void *info_ptr)
         //Check condition
         while (info->no_of_used_log_zones < info->gc_trigger)
             continue;
- 
+
+        printf("Condition\n");	
 	logical_block_map *ptr = info->map[index];	
         while(ptr->log_head == NULL) {
 	    index = (index + 1) % info->data_zones_count;
 	    ptr = info->map[index];
             continue;
 	}
-
+        printf("Douing gc\n");	
 	zone_info *free_zone, *old_zone;
 	pthread_mutex_lock(&info->zones_list_lock);
 	//Get free zone and nullify the chain
             free_zone = info->free_zones_list;
             info->free_zones_list = info->free_zones_list->chain;
             free_zone->chain = NULL;
+	    info->free_zones_count--;
 	pthread_mutex_unlock(&info->zones_list_lock);
 			
 	
@@ -249,31 +323,30 @@ void *gc_thread(void *info_ptr)
 	//Merge the logical block to data zone
 	    old_zone = ptr->block_ptr;
 	    merge(info, ptr, free_zone);
-	    ptr->log_head = NULL;
-	    ptr->block_ptr = free_zone;
 	pthread_mutex_unlock(&ptr->logical_block_lock);
 
-	if(old_zone)
-	    old_zone->num_valid_pages = 0;
 	pthread_mutex_lock(&info->zones_list_lock);
 	//Check used log zone valid counter if zero reset and add to free zone list
 	//Append old data zone to free zones list
 	zone_info *head = info->free_zones_list;
-	if(old_zone) {
-	    if(head) {
-	        while(head->chain)
+	if(old_zone != NULL) {
+	    if(head != NULL) {
+	        while(head->chain != NULL)
                     head = head->chain;
                 head->chain = old_zone;
             } else {
-                head = old_zone;
+                info->free_zones_list = old_zone;
             }
+	    info->free_zones_count++;
         }
 
 	//FIXME: Remove zone from used_log_zones_list if valid_page is zero and add that zone to free_zones_list
 	//Reset if used log zone : if valid pages is reference is zero
 	zone_info *tmp = info->used_log_zones_list, *prev = NULL, *sup;
-	while(tmp) {
+	//printf("exec\n");
+	while(tmp != NULL) {
 	    bool flag = false;
+	    //printf("Page count %d\n",tmp->num_valid_pages);
 	    if(tmp->num_valid_pages == 0) {
 	    	//reset zone
 		nvme_zns_mgmt_send(info->fd, info->nsid, tmp->physical_zone_saddr, false,
@@ -291,6 +364,7 @@ void *gc_thread(void *info_ptr)
 		else
 		    prev->chain = tmp;
 		
+
 		//Append sup to free zones	
 	    	zone_info *itr = info->free_zones_list;
 	        if(itr) {
@@ -298,15 +372,16 @@ void *gc_thread(void *info_ptr)
 		        itr = itr->chain;
 		    itr->chain = sup;
 		} else {
-		    itr = sup;
+		    info->free_zones_list = sup;
 		}
-			
+		info->free_zones_count++;
 	    }
 	    if(!flag) {
 	        prev = tmp;
 	        tmp = tmp->chain;
 	    }
 	}
+	//printf("\n");
 	pthread_mutex_unlock(&info->zones_list_lock);
 	index = (index + 1) % info->data_zones_count;
     }
@@ -325,7 +400,7 @@ static int lookup_map(zns_info *info,
     
     //Search in log
     logpage_map *head = info->map[index]->log_head;
-    while (head) {
+    while (head != NULL) {
         if (head->logical_addr == logical_addr) {
             *physical_addr = head->physical_addr;
 	    pthread_mutex_unlock(&info->map[index]->logical_block_lock);
@@ -338,7 +413,6 @@ static int lookup_map(zns_info *info,
     uint32_t offset = offset_function(logical_addr, info->zns_pages_per_zone);
     *physical_addr = info->map[index]->block_ptr->physical_zone_saddr + offset;
     pthread_mutex_unlock(&info->map[index]->logical_block_lock);
-
     return 0;
 }
 
@@ -350,9 +424,10 @@ static void update_map(zns_info *info,
     int index = hash_function(logical_addr, info->zns_pages_per_zone);
     logical_block_map **map = info->map;
     //Fill in hashmap
-    
+    //printf("Added to %d\n",index); 
     //Lock for the update in log
     pthread_mutex_lock(&info->map[index]->logical_block_lock);
+
     if (map[index]->log_head == NULL) {
     	map[index]->log_head = (logpage_map *)calloc(1, sizeof(logpage_map));
         increment_zone_valid_page_counter(info->curr_log_zone);
@@ -379,7 +454,7 @@ static void update_map(zns_info *info,
     while (ptr->next) {
         if (ptr->next->logical_addr == logical_addr) {
 	    //Update log counter
-	        decrement_zone_valid_page_counter(map[index]->log_head->log_ptr);
+	    decrement_zone_valid_page_counter(map[index]->log_head->log_ptr);
             increment_zone_valid_page_counter(info->curr_log_zone);
             ptr->next->log_ptr = info->curr_log_zone;
 	    ptr->next->physical_addr = physical_addr;
@@ -492,11 +567,13 @@ int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device *
     head->physical_zone_saddr = 0;
     head->num_valid_pages = 0;
     zone_info *tmp = head;
+    info->free_zones_count = 1;
     for (uint32_t i = 1; i < info->zns_zones_count; i++) {
 	tmp->chain = (zone_info *)calloc(1, sizeof(zone_info));
 	tmp->chain->physical_zone_saddr = i * info->zns_pages_per_zone;
 	tmp->chain->num_valid_pages = 0;
-	tmp = tmp->chain;	
+	tmp = tmp->chain;
+	info->free_zones_count++;	
     }
     info->free_zones_list = head;
     
@@ -504,7 +581,9 @@ int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device *
     info->curr_log_zone = info->free_zones_list;
     info->free_zones_list = info->free_zones_list->chain;
     info->curr_log_zone->chain = NULL;
+    info->free_zones_count--;
 
+    //Set map for logical blocks
     for (uint32_t i = 0; i < info->data_zones_count; i++) {
         info->map[i] = (logical_block_map *)calloc(1, sizeof(logical_block_map)); 
     	info->map[i]->block_ptr = NULL;
@@ -536,16 +615,14 @@ int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address,
 int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address,
                       void *buffer, uint32_t size)
 {
+    //FIXME: Add lock for entier operation
     unsigned long long physical_addr = 0;
     zns_info *info = (zns_info *)my_dev->_private;
     int ret = append_to_log_zone(info, &physical_addr, buffer, size);
     if (ret)
         return ret;
-    //printf("Wait1\n");    
     update_map(info, address/info->zns_page_size, physical_addr);
-    //printf("Wait2\n %d",info->no_of_used_log_zones);
     check_to_change_log_zone(info, physical_addr);
-    //printf("Wait3\n");
     return 0;
 }
 
