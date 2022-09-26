@@ -138,9 +138,9 @@ static int read_from_nvme(zns_info *info, unsigned long long physical_addr,
     return errno;
 }
 
-zone_info *merge(zns_info *info, logical_block_map *map, zone_info *new_zone)
+void merge(zns_info *info, logical_block_map *map, zone_info *new_zone)
 {
-    page_map *ptr = map->page_maps;
+    page_map *head = map->page_maps;
     zone_info *old_used_zone = map->block_ptr;
     for (uint32_t offset = 0; offset < info->zone_num_pages; ++offset) {
         uint64_t page_physical_addr = 0UL;
@@ -150,10 +150,14 @@ zone_info *merge(zns_info *info, logical_block_map *map, zone_info *new_zone)
             page_physical_addr = old_used_zone->physical_zone_saddr + offset;
             decrement_zone_valid_page_counter(old_used_zone);
         }
-        if (ptr && ptr->logical_addr == map->logical_block_saddr + offset) {
-            page_physical_addr = ptr->physical_addr;
-            decrement_zone_valid_page_counter(ptr->page_zone_info);
-            have_data = true;
+
+	page_map *ptr = head;
+        while (ptr) { 
+	    if(ptr->logical_addr == map->logical_block_saddr + offset) {
+            	page_physical_addr = ptr->physical_addr;
+            	decrement_zone_valid_page_counter(ptr->page_zone_info);
+            	have_data = true;
+	    }
             ptr = ptr->next;
         }
 
@@ -190,7 +194,6 @@ zone_info *merge(zns_info *info, logical_block_map *map, zone_info *new_zone)
             info->free_zones_list = old_used_zone;
         }
     }
-    return old_used_zone;
 }
 
 void *gc_thread(void *info_ptr)
@@ -204,7 +207,8 @@ void *gc_thread(void *info_ptr)
  
         logical_block_map *ptr = info->map[index];	
         while (!ptr->page_maps) {
-            index = (index + 1) % info->num_data_zones;
+            printf("Here\n");
+	    index = (index + 1) % info->num_data_zones;
             ptr = info->map[index];
             continue;
         }
@@ -218,7 +222,7 @@ void *gc_thread(void *info_ptr)
         
         pthread_mutex_lock(&ptr->logical_block_lock);
         //Merge the logical block to data zone
-        zone_info *old_zone = merge(info, ptr, free_zone);
+        merge(info, ptr, free_zone);
         pthread_mutex_unlock(&ptr->logical_block_lock);
 
         pthread_mutex_lock(&info->zones_list_lock);
