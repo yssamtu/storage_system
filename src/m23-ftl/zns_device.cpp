@@ -202,16 +202,19 @@ void *gc_thread(void *info_ptr)
     uint32_t index = 0;
     while (info->run_gc) {
         //Check condition
-        while (info->num_used_log_zones < info->gc_trigger)
+        while ((info->num_used_log_zones < info->gc_trigger)&&(info->run_gc))
             continue;
  
+
         logical_block_map *ptr = info->map[index];	
-        while (!ptr->page_maps) {
-            printf("Here\n");
+        while((!ptr->page_maps)&&(info->run_gc)) {
 	    index = (index + 1) % info->num_data_zones;
             ptr = info->map[index];
             continue;
         }
+
+	if(!info->run_gc)
+	    break;
 
         pthread_mutex_lock(&info->zones_list_lock);
         //Get free zone and nullify the chain
@@ -537,7 +540,8 @@ int deinit_ss_zns_device(struct user_zns_device *my_dev)
     //Kill gc
     info->run_gc = false;
     pthread_join(info->gc_thread_id, NULL);
-
+    
+    
     logical_block_map **map = info->map;
     //free hashmap
     for (uint32_t i = 0; i < info->num_data_zones; ++i) {
