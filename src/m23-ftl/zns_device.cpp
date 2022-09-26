@@ -26,6 +26,7 @@ SOFTWARE.
 #include <cstdbool>
 #include <cstring>
 #include <cerrno>
+#include <unistd.h>
 #include <pthread.h>
 #include <libnvme.h>
 #include <unistd.h>
@@ -87,6 +88,7 @@ struct zns_info {
     logical_block_map **map; // Page mapped hashmap for log zone
 
     //Free zones array
+    uint32_t free_zones_count;
     zone_info *free_zones_list;
 };
 
@@ -271,6 +273,7 @@ static inline int offset_function(uint32_t key, uint32_t base)
     return key % base;
 }
 
+
 //Change this func
 static void check_to_change_log_zone(zns_info *info,
                                      unsigned long long last_append_addr)
@@ -280,12 +283,13 @@ static void check_to_change_log_zone(zns_info *info,
     if (last_append_addr - info->curr_log_zone->physical_zone_saddr <
         info->zone_num_pages - 1)
 	    return;
+
     pthread_mutex_lock(&info->zones_list_lock); //Lock for changing used_log_zones_list and accessing free zones list;
     if (!info->used_log_zones_list) {
         info->used_log_zones_list = info->curr_log_zone;
     } else {
         zone_info *head = info->used_log_zones_list;
-        while(head->chain)
+        while(head->chain != NULL)
             head = head->chain;
         head->chain = info->curr_log_zone;
     }
@@ -316,7 +320,7 @@ static void update_map(zns_info *info,
     logical_block_map **map = info->map;
     increment_zone_valid_page_counter(info->curr_log_zone);
     //Fill in hashmap
-    
+    //printf("Added to %d\n",index); 
     //Lock for the update in log
     pthread_mutex_lock(&info->map[index]->logical_block_lock);
     if (map[index]->page_maps == NULL) {
@@ -519,7 +523,6 @@ int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address,
     update_map(info, address / info->zns_page_size, physical_addr);
     //printf("Wait2\n %d",info->num_used_log_zones);
     check_to_change_log_zone(info, physical_addr);
-    //printf("Wait3\n");
     return 0;
 }
 
