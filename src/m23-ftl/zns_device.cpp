@@ -197,13 +197,11 @@ void *gc_thread(void *info_ptr)
     uint32_t index = 0;
     while (info->run_gc) {
         //Check condition
-        while (info->num_used_log_zones < info->gc_trigger && info->run_gc)
-            continue;
+        while (info->num_used_log_zones < info->gc_trigger && info->run_gc);
         logical_block_map *ptr = info->logical_block_maps[index];
         while(!ptr->page_maps && info->run_gc) {
 	        index = (index + 1) % info->num_data_zones;
             ptr = info->logical_block_maps[index];
-            printf("free_zones: %u, used_log_zones: %d\n", info->num_free_zones, info->num_used_log_zones);
             continue;
         }
         if(!info->run_gc)
@@ -535,35 +533,40 @@ int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address,
 {
     unsigned long long physical_addr = 0ULL;
     zns_info *info = (zns_info *)my_dev->_private;
-    // // if can write to data zone directly
-    // uint32_t index = hash_function(address / info->zns_page_size, info->zone_num_pages);
-    // pthread_mutex_lock(&info->logical_block_maps[index]->logical_block_lock);
-    // if (info->logical_block_maps[index]->block_ptr) {
-    //     while (info->logical_block_maps[index]->block_ptr->num_valid_pages < address / info->zns_page_size - info->logical_block_maps[index]->logical_block_saddr) {
-    //         uint32_t size = info->zns_page_size;
-    //         char *buffer = (char *)calloc(1, size);
-    //         int ret = append_to_zone(info, info->logical_block_maps[index]->block_ptr->physical_zone_saddr,
-    //                                  &physical_addr, buffer, size);
-    //         free(buffer);
-    //         if (ret)
-    //             return ret;
-    //         increase_zone_num_valid_page(info->logical_block_maps[index]->block_ptr);
-    //     }
-    //     int ret = append_to_zone(info, info->logical_block_maps[index]->block_ptr->physical_zone_saddr,
-    //                              &physical_addr, buffer, size);
-    //     if (ret)
-    //         return ret;
-    //     increase_zone_num_valid_page(info->logical_block_maps[index]->block_ptr);
-    //     pthread_mutex_unlock(&info->logical_block_maps[index]->logical_block_lock);
-    // } else {
-        // pthread_mutex_unlock(&info->logical_block_maps[index]->logical_block_lock);
+    uint32_t index = hash_function(address / info->zns_page_size,
+                                   info->zone_num_pages);
+    logical_block_map *map = info->logical_block_maps[index];
+    pthread_mutex_lock(&map->logical_block_lock);
+    // if can write to data zone directly
+    if (map->block_ptr &&
+        map->block_ptr->num_valid_pages < info->zone_num_pages) {
+        uint32_t offset = offset_function(address / info->zns_page_size,
+                                          info->zone_num_pages);
+        char *null_buffer = (char *)calloc(1, info->zns_page_size);
+        while (map->block_ptr->num_valid_pages < offset) {
+            int ret = append_to_zone(info, map->block_ptr->physical_zone_saddr,
+                                     &physical_addr,
+                                     null_buffer, info->zns_page_size);
+            if (ret)
+                return ret;
+            increase_zone_num_valid_page(map->block_ptr);
+        }
+        free(null_buffer);
+        int ret = append_to_zone(info, map->block_ptr->physical_zone_saddr,
+                                 &physical_addr, buffer, size);
+        if (ret)
+            return ret;
+        increase_zone_num_valid_page(map->block_ptr);
+        pthread_mutex_unlock(&map->logical_block_lock);
+    } else {
+        pthread_mutex_unlock(&map->logical_block_lock);
         int ret = append_to_zone(info, info->curr_log_zone->physical_zone_saddr,
                                  &physical_addr, buffer, size);
         if (ret)
             return ret;
         update_map(info, address / info->zns_page_size, physical_addr);
         check_to_change_log_zone(info, physical_addr);
-    // }
+    }
     return 0;
 }
 
