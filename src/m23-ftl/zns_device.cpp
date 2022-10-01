@@ -74,7 +74,7 @@ struct zns_info {
     uint32_t zns_num_zones;
     uint32_t zone_num_pages;
     uint32_t num_data_zones;
-    uint32_t maximum_data_transfer_size;
+    uint32_t max_data_transfer_size;
     uint32_t zone_append_size_limit;
     pthread_mutex_t zones_list_lock;
     // Log zone maintainance
@@ -555,16 +555,16 @@ int init_ss_zns_device(struct zdev_init_params *params,
     // set user capacity bytes = #data_zones * zone_capacity
     (*my_dev)->capacity_bytes = (info->num_data_zones) *
                                 (*my_dev)->tparams.zns_zone_capacity;
-    // set maximum_data_transfer_size
+    // set max_data_transfer_size
     struct nvme_id_ctrl ctrl;
     nvme_identify_ctrl(info->fd, &ctrl);
     void *regs = mmap(NULL, getpagesize(), PROT_READ,MAP_SHARED, info->fd, 0);
-    info->maximum_data_transfer_size = (1 << (NVME_CAP_MPSMIN(nvme_mmio_read64(regs)) + ctrl.mdts)) *
+    info->max_data_transfer_size = (1 << (NVME_CAP_MPSMIN(nvme_mmio_read64(regs)) + ctrl.mdts)) *
                                        (*my_dev)->lba_size_bytes;
     // set zone_append_size_limit
     struct nvme_zns_id_ctrl id;
     nvme_zns_identify_ctrl(info->fd, &id);
-    info->zone_append_size_limit = (1 << (NVME_CAP_MPSMIN(nvme_mmio_read64(regs)) + id.zasl)) *
+    info->zone_append_size_limit = ((1 << (NVME_CAP_MPSMIN(nvme_mmio_read64(regs)) + id.zasl)) - 1) *
                                    (*my_dev)->lba_size_bytes;
     // set log zone page mapped hashmap size to num_data_zones
     info->logical_block_maps = (logical_block_map **)calloc(info->num_data_zones,
