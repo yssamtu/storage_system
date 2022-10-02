@@ -102,14 +102,14 @@ static inline uint32_t hash_function(uint32_t key, uint32_t base);
 static inline uint32_t offset_function(uint32_t key, uint32_t base);
 static void change_log_zone(zns_info *info);
 static int lookup_map(zns_info *info,
-                      uint32_t logical_page_addr, unsigned long long *physical_addr);
+                      uint64_t logical_page_addr, unsigned long long *physical_addr);
 static void update_map(zns_info *info,
-                       uint32_t logical_page_addr, unsigned long long physical_addr);
+                       uint64_t logical_page_addr, unsigned long long physical_addr);
 static int read_from_nvme(zns_info *info, unsigned long long physical_addr,
                           void *buffer, uint32_t size);
 static int append_to_data_zone(zns_info *info, unsigned long long saddr,
                                void *buffer, uint32_t size);
-static int append_to_log_zone(zns_info *info, uint64_t logical_addr,
+static int append_to_log_zone(zns_info *info, uint64_t logical_page_addr,
                                void *buffer, uint32_t size);
 static void merge(zns_info *info, logical_block_map *map, zone_info *new_zone);
 static void *garbage_collection(void *info_ptr);
@@ -194,7 +194,7 @@ static void change_log_zone(zns_info *info)
 }
 
 static int lookup_map(zns_info *info,
-                      uint32_t logical_page_addr, unsigned long long *physical_addr)
+                      uint64_t logical_page_addr, unsigned long long *physical_addr)
 {
     uint32_t index = hash_function(logical_page_addr, info->zone_num_pages);
     //Lock the logical block
@@ -226,7 +226,7 @@ static int lookup_map(zns_info *info,
 }
 
 static void update_map(zns_info *info,
-                       uint32_t logical_page_addr, unsigned long long physical_addr)
+                       uint64_t logical_page_addr, unsigned long long physical_addr)
 {
     uint32_t index = hash_function(logical_page_addr, info->zone_num_pages);
     logical_block_map *maps = info->logical_block_maps;
