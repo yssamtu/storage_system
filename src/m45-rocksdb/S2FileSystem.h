@@ -31,7 +31,92 @@ SOFTWARE.
 #include <zns_device.h>
 #include <iostream>
 
+
+#define LOOKUP_MAP_SIZE 1000
 namespace ROCKSDB_NAMESPACE {
+
+    struct mapEntries {
+       char *id;
+       void *ptr;
+       mapEntries *chain;
+    };
+
+    struct MYFS {
+       mapEntries *LookupMap[LOOKUP_MAP_SIZE]; //Map type to void ptrs;
+    };    
+
+    struct Inode {
+       char EntityName[239];
+       bool IsDir;
+       uint64_t FileSize;
+       uint64_t Indirect_ptr_lbas;
+       uint64_t Direct_data_lbas[320];
+    };
+
+    struct Indirect_ptr {
+       uint64_t Direct_data_lbas[511];
+       uint64_t Indirect_ptr_lbas;       
+    };
+
+    struct dir_data {
+        char EntityName[252];
+        uint32_t InodeNum;
+    };
+
+    struct Dir {
+        dir_data Entities[16];
+    };	
+	
+    class MYFS_File {
+        private:
+           int inode;
+           char *fileName;
+	public:
+           IOStatus Read();
+           IOStatus Write();
+           IOStatus Close();
+    };
+    
+
+    /*
+     *Creates read only MYFS_File object
+     */
+    class MYFS_SequentialFile : public FSSequentialFile {
+    	private:
+	    std::string filename;
+	    MYFS_File *fp;
+	    uint64_t buffer_alignment_size;
+	public:
+	    MYFS_SequentialFile(const std::string& fname, MYFS_File *fp);
+	    virtual ~MYFS_SequentialFile();
+	    virtual IOStatus Read(size_t n,const IOOptions& opts, Slice* result,
+			         char* scratch, IODebugContext* dbg) override;
+	    virtual IOStatus PositionedRead(uint64_t offset, size_t n,
+	    				    const IOOptions& opts, Slice* result,
+					    char* scratch, IODebugContext* dbg) override;
+	    virtual IOStatus Skip(uint64_t n) override;
+  	    virtual IOStatus InvalidateCache(size_t offset, size_t length) override {
+	        return IOStatus::OK();
+	    };
+  	    virtual bool use_direct_io() const override { return false; }
+  	    virtual size_t GetRequiredBufferAlignment() const override {
+    		return buffer_alignment_size;
+  	    }
+    };
+	
+    class MYFS_RandomAccessFile : public FSRandomAccessFile {
+    
+    };
+
+    class MYFS_WritableFile : public FSWritableFile {
+    
+    };
+
+    class MYFS_Directory : public FSDirectory {
+    
+    };
+
+
 
     class S2FileSystem : public FileSystem {
     public:
