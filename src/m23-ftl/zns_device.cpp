@@ -20,15 +20,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  */
 
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstdint>
 #include <cstring>
-#include <cerrno>
+#include <libnvme.h>
 #include <pthread.h>
 #include <sys/mman.h>
 #include <unistd.h>
-#include <libnvme.h>
 #include "zns_device.h"
 
 extern "C" {
@@ -547,12 +547,12 @@ int init_ss_zns_device(struct zdev_init_params *params,
         printf("Failed to mmap\n");
         return errno;
     }
-    info->mdts = ((1 << (NVME_CAP_MPSMIN(nvme_mmio_read64(regs)) + ctrl.mdts)) - 1) *
+    info->mdts = ((1U << (NVME_CAP_MPSMIN(nvme_mmio_read64(regs)) + ctrl.mdts)) - 1) *
                  (*my_dev)->lba_size_bytes;
     // set zone_append_size_limit
     struct nvme_zns_id_ctrl id;
     nvme_zns_identify_ctrl(info->fd, &id);
-    info->zasl = ((1 << (NVME_CAP_MPSMIN(nvme_mmio_read64(regs)) + id.zasl)) - 1) *
+    info->zasl = ((1U << (NVME_CAP_MPSMIN(nvme_mmio_read64(regs)) + id.zasl)) - 1) *
                  (*my_dev)->lba_size_bytes;
     munmap(regs, getpagesize());
     if (errno) {
@@ -666,43 +666,62 @@ int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address,
                       void *buffer, uint32_t size)
 {
     zns_info *info = (zns_info *)my_dev->_private;
-    uint32_t index = get_block_index(address / info->zns_page_size,
-                                     info->zone_num_pages);
-    logical_block *block = &info->logical_blocks[index];
-    pthread_mutex_lock(&block->logical_block_lock);
-    // if can write to data zone directly
-    if (!block->old_page_maps && block->block_map &&
-        block->block_map->write_ptr < info->zone_num_pages) {
+    while (size > 0) {
+        uint32_t index = get_block_index(address / info->zns_page_size,
+                                         info->zone_num_pages);
+        logical_block *block = &info->logical_blocks[index];
         uint32_t offset = get_data_offset(address / info->zns_page_size,
                                           info->zone_num_pages);
-        // append null data until arrive offset
-        uint32_t null_size = (offset - block->block_map->num_valid_pages) *
-                             info->zns_page_size;
-        char *null_buffer = (char *)calloc(null_size, sizeof(char));
-        int ret = append_to_data_zone(info, block->block_map->zone_saddr,
-                                      null_buffer, null_size);
-        free(null_buffer);
-        if (ret) {
+        uint32_t curr_append_size = 0U;
+        pthread_mutex_lock(&block->logical_block_lock);
+        // if can write to data zone directly
+        if (!block->old_page_maps && block->block_map &&
+            block->block_map->write_ptr <= offset) {
+            if (block->block_map->write_ptr < offset) {
+                // append null data until arrive offset
+                uint32_t null_size = (offset - block->block_map->write_ptr) *
+                                     info->zns_page_size;
+                char *null_buffer = (char *)calloc(null_size, sizeof(char));
+                int ret = append_to_data_zone(info, block->block_map->zone_saddr,
+                                              null_buffer, null_size);
+                free(null_buffer);
+                if (ret) {
+                    pthread_mutex_unlock(&block->logical_block_lock);
+                    return ret;
+                }
+                increase_zone_write_ptr(block->block_map,
+                                        offset - block->block_map->write_ptr);
+            }
+            curr_append_size = (info->zone_num_pages - offset) *
+                               info->zns_page_size;
+            if (curr_append_size > size)
+                curr_append_size = size;
+            int ret = append_to_data_zone(info, block->block_map->zone_saddr,
+                                          buffer, curr_append_size);
+            if (ret) {
+                pthread_mutex_unlock(&block->logical_block_lock);
+                return ret;
+            }
+            increase_zone_write_ptr(block->block_map,
+                                    curr_append_size / info->zns_page_size);
             pthread_mutex_unlock(&block->logical_block_lock);
-            return ret;
-        }
-        increase_zone_write_ptr(block->block_map,
-                                offset - block->block_map->num_valid_pages);
-        // append data
-        ret = append_to_data_zone(info, block->block_map->zone_saddr,
-                                  buffer, size);
-        if (ret) {
+        } else {
+            curr_append_size = size;
+            if (!block->old_page_maps && block->block_map) {
+                uint32_t diff_size = (block->block_map->write_ptr - offset) *
+                                     info->zns_page_size;
+                if (curr_append_size > diff_size)
+                    curr_append_size = diff_size;
+            }
             pthread_mutex_unlock(&block->logical_block_lock);
-            return ret;
+            int ret = append_to_log_zone(info, address / info->zns_page_size,
+                                         buffer, curr_append_size);
+            if (ret)
+                return ret;
         }
-        increase_zone_write_ptr(block->block_map, size / info->zns_page_size);
-        pthread_mutex_unlock(&block->logical_block_lock);
-    } else {
-        pthread_mutex_unlock(&block->logical_block_lock);
-        int ret = append_to_log_zone(info, address / info->zns_page_size,
-                                     buffer, size);
-        if (ret)
-            return ret;
+        address += curr_append_size;
+        buffer = (char *)buffer + curr_append_size;
+        size -= curr_append_size;
     }
     return 0;
 }
