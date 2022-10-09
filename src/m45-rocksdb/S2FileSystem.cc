@@ -56,7 +56,7 @@ namespace ROCKSDB_NAMESPACE {
     
     }
 
-    void Get_EntityName(std::string path, string::string &entityName) {
+    void Get_EntityName(std::string path, std::string &entityName) {
     
     }
 
