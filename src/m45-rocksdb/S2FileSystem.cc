@@ -29,39 +29,75 @@ SOFTWARE.
 #include <utils.h>
 
 namespace ROCKSDB_NAMESPACE {
+    int LookupMap_HashFunction(void *data) {
+         return *((int*) data) / LOOKUP_MAP_SIZE;
+    }
+
+    int LookupMap_Lookup(MYFS *FSObj, std::string id, void *ptr) {
+
+    }
+
+    int LookupMap_Insert(MYFS *FSObj, std::string id, void *ptr) {
+
+    }
 
     int Load_From_NVM(uint64_t addr, void *buffer, uint64_t size) {
 	return 0;
     }
 
-    int LookupMap_HashFunction(void *data) {
-   	 return *((int*) data) / LOOKUP_MAP_SIZE;
+    int Store_To_NVM(uint64_t addr, void *buffer, uint64_t size) {
+        return 0;
     }
 
-    int LookupMap_Lookup(MYFS *FSObj, std::string id, void *ptr) {
+    uint32_t get_FreeInode(MYFS *FSObj) {
     
     }
 
-    int LookupMap_Insert(MYFS *FSObj, std::string id, void *ptr) {
+    uint64_t get_FreeDataBlock(MYFS *FSObj) {
     
     }
 
-    int Load_Children(Inode *ptr, std::string entitiyName, std::vector<dir_data> *children, bool loadChildren) {
-    	//Check no of children and load it
+    //Trim till /../path in /../path/name
+    void Get_ParentPath(std::string path, std::string &parent) {
+	int index;
+	for(int i=path.size()-1; i>=0; i--) {
+	    if (path[i]=='/') {
+	        index = i;
+	    	break;
+	    }
+	}
+	parent = path.substr(0,index);
+    }
+
+    //Trim /../path/name to name
+    void Get_EntityName(std::string path, std::string &entityName) {
+	int index;
+        for(int i=path.size()-1; i>=0; i--) {
+            if (path[i]=='/') {
+                index = i;
+                break;
+            }
+        }
+        parent = path.substr(index+1,path.size());
+    }
+
+    //Load_Childrent function reads DIR's data, either store children names in vector or return inode of asked child depending on bool
+    //return value will be 0 if asked child is not present
+    uint32_t Load_Children(Inode *ptr, std::string entitiyName, std::vector<std::string> *children, bool loadChildren) {
+	//Check no of children and load it
 	uint64_t childrens_count = ptr->FileSize;
 
     }
 
-    void Get_ParentPath(std::string path, std::string &parent) {
-    
-    }
-
-    void Get_EntityName(std::string path, string::string &entityName) {
-    
-    }
-
+    //A recursive call to load inode of the given path to lookupmap
+    //Stores the inode ptr as well, returns 0 in success	
     int Get_Path_Inode(MYFS *FSObj, std::string path, Inode *ptr) {
-        //Check if path in lookupMap cache
+        if (path=="/tmp") {
+	   ptr = FSObj->rootEntry;
+	   return 0;
+	}
+	    
+	//Check if path in lookupMap cache
 	int isPresent = LookupMap_Lookup(FSObj, path, ptr);
 	if(!isPresent)
 	    return 0;
@@ -78,17 +114,78 @@ namespace ROCKSDB_NAMESPACE {
 	if(parentInode->FileSize == 0)
 	    return -1;
 
-	//Get children
+	//Get Entity to search for
 	std::string entityName;
 	Get_EntityName(path, entityName);
 	uint32_t index = Load_Children(parentInode, entityName, NULL, false);
-	//Load the inode;
+	if (index)
+	    return -1;
+
+	//Load the children index inode from disk and store in lookupMap;
 	uint64_t address = SUPER_BLOCK_SIZE + index * INODE_SIZE;
 	ptr = (Inode *) calloc(1, sizeof(Inode));
 	isPresent = Load_From_NVM(address, ptr, (uint64_t) INODE_SIZE);
+	if (isPresent)
+	    return -1;
 
 	//Put it in lookup Map    	
-    	isPresent = LookupMap_Insert(FSObj, path, ptr);
+    	LookupMap_Insert(FSObj, path, ptr);
+
+	return 0;
+    }
+
+
+    int Update_Parent(MYFS *FSObj, std::string Ppath, std::string childName, uint32_t childInode) {
+        Inode *ptr;
+        int isPresent = Get_Path_Inode(FSObj, Ppath, ptr);
+        ptr->FileSize += 1;
+	//FIXME : Get the dir update logic here
+	return 0;
+    }
+
+
+    int MYFS_CreateFile(MYFS *FSObj, std::string path) {
+        uint32_t inode_no = get_FreeInode(FSObj);
+        Inode *ptr = (Inode *) calloc(1, sizeof(Inode));
+        //Fill the ptr
+        std::string entityName;
+        Get_EntityName(path, entityName);
+        strcpy(ptr->EntityName,entityName.c_str());
+
+        //Update parent
+	std::string parent;
+	Get_ParentPath(path, parent);
+	int parentUpdated = Update_Parent(FSObj, parent, entityName, inode_no);
+        if (parentUpdated)
+	    return -1;
+
+    	//Load to lookupmap
+        LookupMap_Insert(FSObj, path, ptr);
+        
+	return 0;
+    }
+
+    int MYFS_CreateDir(MYFS *FSObj, std::string path) {
+        uint32_t inode_no = get_FreeInode(FSObj);
+        Inode *ptr = (Inode *) calloc(1, sizeof(Inode));
+
+        //Fill the ptr
+        std::string entityName;
+        Get_EntityName(path, entityName);
+        strcpy(ptr->EntityName,entityName.c_str());
+        ptr->IsDir = true;
+
+	//Update parent
+        std::string parent;
+        Get_ParentPath(path, parent);
+        int parentUpdated = Update_Parent(FSObj, parent, entityName, inode_no);
+        if (parentUpdated)
+            return -1;
+
+        //Load to lookupmap
+        LookupMap_Insert(FSObj, path, ptr);
+	
+    	return 0;
     }
 
 
@@ -123,22 +220,25 @@ namespace ROCKSDB_NAMESPACE {
 	//Init Bitmaps from disk
 	if (debug)
 	    std::cout<<"Init MYFS"<<std::endl;
-	//this->FileSystemObj;
-	this->FileSystemObj.FileSystemCapacity = this->_zns_dev->capacity_bytes;
-	this->FileSystemObj.LogicalBlockSize = this->_zns_dev->lba_size_bytes;
+	this->FileSystemObj = (MYFS *) calloc(1, sizeof(MYFS));
+	this->FileSystemObj->FileSystemCapacity = this->_zns_dev->capacity_bytes;
+	this->FileSystemObj->LogicalBlockSize = this->_zns_dev->lba_size_bytes;
 	//We reserve a single block as super block and MAX_INODE_COUNT as 
-	this->FileSystemObj.DataBlockCount = (this->FileSystemObj.FileSystemCapacity / this->FileSystemObj.LogicalBlockSize
+	this->FileSystemObj->DataBlockCount = (this->FileSystemObj->FileSystemCapacity / this->FileSystemObj->LogicalBlockSize
 					    - (MAX_INODE_COUNT + 1));
 	if (debug)
-	    std::cout<<"File System params : "<<this->FileSystemObj.FileSystemCapacity<<" "<<
-		    this->FileSystemObj.LogicalBlockSize<<" "<<this->FileSystemObj.DataBlockCount<<std::endl;
+	    std::cout<<"File System params : "<<this->FileSystemObj->FileSystemCapacity<<" "<<
+		    this->FileSystemObj->LogicalBlockSize<<" "<<this->FileSystemObj->DataBlockCount<<std::endl;
 
 	//Init Data blocks bitmap
-	this->FileSystemObj.DataBitMap = (bool*) calloc(this->FileSystemObj.DataBlockCount, sizeof(bool));
+	this->FileSystemObj->DataBitMap = (bool*) calloc(this->FileSystemObj->DataBlockCount, sizeof(bool));
 	
 	//Init root inode
 	//TODO: In case of persistency check if already present in disk
-	this->FileSystemObj.rootEntry = (Inode *) calloc(1,sizeof(Inode));    
+	//FIXME: Get root dir name dynamically
+	strcpy(this->FileSystemObj->rootEntry->EntityName,"tmp");
+	this->FileSystemObj->rootEntry->IsDir = true;
+	this->FileSystemObj->rootEntry->FileSize = 0;	
     }
 
     S2FileSystem::~S2FileSystem() {
@@ -224,18 +324,37 @@ namespace ROCKSDB_NAMESPACE {
 
     // Create the specified directory. Returns error if directory exists.
     IOStatus S2FileSystem::CreateDir(const std::string &dirname, const IOOptions &options, IODebugContext *dbg) {
-        return IOStatus::IOError(__FUNCTION__);
+        Inode *ptr;
+        int isPresent = Get_Path_Inode(this->FileSystemObj, dirname, ptr);
+	if (isPresent)
+	    isPresent = MYFS_CreateDir(this->FileSystemObj, dirname);
+	else
+	    return IOStatus::IOError(__FUNCTION__);
+
+	return IOStatus::OK();
     }
 
     // Creates directory if missing. Return Ok if it exists, or successful in
     // Creating.
     IOStatus S2FileSystem::CreateDirIfMissing(const std::string &dirname, const IOOptions &options, IODebugContext *dbg) {
-        return IOStatus::IOError(__FUNCTION__);
+	Inode *ptr;
+	int isPresent = Get_Path_Inode(this->FileSystemObj, dirname, ptr);	
+	if (isPresent)
+		isPresent = MYFS_CreateDir(this->FileSystemObj, dirname);
+	if (isPresent)
+		return IOStatus::IOError(__FUNCTION__);
+	return IOStatus::OK();
     }
 
     IOStatus
     S2FileSystem::GetFileSize(const std::string &fname, const IOOptions &options, uint64_t *file_size, IODebugContext *dbg) {
-        return IOStatus::IOError(__FUNCTION__);
+        Inode *ptr;
+	int isPresent = Get_Path_Inode(this->FileSystemObj, fname, ptr);
+	if (isPresent)
+	    return IOStatus::IOError(__FUNCTION__);
+	else
+	    *file_size = ptr->FileSize;
+	return IOStatus::OK();
     }
 
     IOStatus S2FileSystem::DeleteDir(const std::string &dirname, const IOOptions &options, IODebugContext *dbg) {
@@ -249,7 +368,8 @@ namespace ROCKSDB_NAMESPACE {
 
     IOStatus S2FileSystem::GetAbsolutePath(const std::string &db_path, const IOOptions &options, std::string *output_path,
                                            IODebugContext *dbg) {
-        return IOStatus::IOError(__FUNCTION__);
+        *output_path = db_path;
+	return IOStatus::OK();
     }
 
     IOStatus S2FileSystem::DeleteFile(const std::string &fname, const IOOptions &options, IODebugContext *dbg) {
@@ -322,7 +442,12 @@ namespace ROCKSDB_NAMESPACE {
     //         IOError if an IO Error was encountered
     IOStatus S2FileSystem::GetChildren(const std::string &dir, const IOOptions &options, std::vector<std::string> *result,
                                        IODebugContext *dbg) {
-        return IOStatus::IOError(__FUNCTION__);
+        Inode *ptr;
+	int err = Get_Path_Inode(this->FileSystemObj, dir, ptr);
+	if (err)
+	    return IOStatus::IOError(__FUNCTION__);
+	Load_Children(ptr, "", result, true);
+        return IOStatus::OK();
     }
 
     // Returns OK if the named file exists.
@@ -331,7 +456,11 @@ namespace ROCKSDB_NAMESPACE {
     //                  whether this file exists, or if the path is invalid.
     //         IOError if an IO Error was encountered
     IOStatus S2FileSystem::FileExists(const std::string &fname, const IOOptions &options, IODebugContext *dbg) {
-        return IOStatus::IOError(__FUNCTION__);
+        Inode *ptr;
+	int isPresent = Get_Path_Inode(this->FileSystemObj, fname, ptr);
+        if (isPresent)
+	    return IOStatus::IOError(__FUNCTION__);
+    	return IOStatus::OK();
     }
 
     IOStatus

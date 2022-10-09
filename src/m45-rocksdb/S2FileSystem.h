@@ -82,7 +82,7 @@ namespace ROCKSDB_NAMESPACE {
     int Read_User_Data();
     void Get_ParentPath(std::string path, std::string &parent);
     void Get_EntityName(std::string path, std::string &entityName);
-    void Load_Childrens(Inode *ptr, std::string entityName, std::vector<dir_data> *children, bool loadChildren);
+    void Load_Childrens(Inode *ptr, std::string entityName, std::vector<std::string> *children, bool loadChildren);
     int Get_Path_Inode(MYFS *FSObj, std::string path, Inode *ptr);
     int LookupMap_HashFunction(void *data);
 
@@ -239,7 +239,7 @@ namespace ROCKSDB_NAMESPACE {
         struct user_zns_device *_zns_dev;
         std::string _uri;
         const std::string _fs_delimiter = "/";
-    	struct MYFS FileSystemObj;
+    	struct MYFS *FileSystemObj;
     };
 }
 
