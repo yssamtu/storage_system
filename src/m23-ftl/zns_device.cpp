@@ -114,366 +114,6 @@ static int append_to_log_zone(zns_info *info, uint64_t logical_page_addr,
 static void merge(zns_info *info, logical_block *block, zone_info *new_zone);
 static void *garbage_collection(void *info_ptr);
 
-static inline void increase_zone_num_valid_page(zone_info *zone,
-                                                uint32_t num_pages)
-{
-    pthread_mutex_lock(&zone->num_valid_pages_lock);
-    zone->num_valid_pages += num_pages;
-    pthread_mutex_unlock(&zone->num_valid_pages_lock);
-}
-
-static inline void decrease_zone_num_valid_page(zone_info *zone,
-                                                uint32_t num_pages)
-{
-    pthread_mutex_lock(&zone->num_valid_pages_lock);
-    zone->num_valid_pages -= num_pages;
-    pthread_mutex_unlock(&zone->num_valid_pages_lock);
-}
-
-static inline void increase_zone_write_ptr(zone_info *zone,
-                                           uint32_t num_pages)
-{
-    pthread_mutex_lock(&zone->write_ptr_lock);
-    zone->write_ptr += num_pages;
-    pthread_mutex_unlock(&zone->write_ptr_lock);
-}
-
-static inline void decrease_zone_write_ptr(zone_info *zone,
-                                           uint32_t num_pages)
-{
-    pthread_mutex_lock(&zone->write_ptr_lock);
-    zone->write_ptr -= num_pages;
-    pthread_mutex_unlock(&zone->write_ptr_lock);
-}
-
-static inline uint32_t get_block_index(uint32_t key, uint32_t base)
-{
-    return key / base;
-}
-
-static inline uint32_t get_data_offset(uint32_t key, uint32_t base)
-{
-    return key % base;
-}
-
-static void change_log_zone(zns_info *info)
-{
-    pthread_mutex_lock(&info->zones_list_lock); // Lock for changing used_log_zones_list and accessing free zones list;
-    if (info->used_log_zones_list)
-        info->used_log_zones_list_tail->next = info->curr_log_zone;
-    else
-        info->used_log_zones_list = info->curr_log_zone;
-    info->used_log_zones_list_tail = info->curr_log_zone;
-    ++info->num_used_log_zones;
-    info->curr_log_zone = NULL;
-    pthread_mutex_unlock(&info->zones_list_lock);
-    while (info->num_used_log_zones == info->num_log_zones);
-    //Dequeue from free_zone to curr_log_zone;
-    while (!info->curr_log_zone) {
-        pthread_mutex_lock(&info->zones_list_lock);
-        if (info->num_free_zones > 1) {
-            info->curr_log_zone = info->free_zones_list;
-            info->free_zones_list = info->free_zones_list->next;
-            info->curr_log_zone->next = NULL;
-            --info->num_free_zones;
-        }
-        pthread_mutex_unlock(&info->zones_list_lock);
-    }
-}
-
-static bool look_up_map(page_map *maps, uint64_t logical_page_addr,
-                        unsigned long long *physical_addr)
-{
-    //Lock the logical block
-    //Search in log zone
-    for (page_map *head = maps; head; head = head->next) {
-        if (head->logical_page_addr > logical_page_addr)
-            return false;
-        if (head->logical_page_addr == logical_page_addr) {
-            *physical_addr = head->physical_addr;
-            return true;
-        }
-    }
-    return false;
-}
-
-static void update_map(zns_info *info, uint64_t logical_page_addr,
-                       unsigned long long physical_addr)
-{
-    uint32_t index = get_block_index(logical_page_addr, info->zone_num_pages);
-    logical_block *block = &info->logical_blocks[index];
-    increase_zone_num_valid_page(info->curr_log_zone, 1);
-    increase_zone_write_ptr(info->curr_log_zone, 1);
-    //Lock for updating page map
-    pthread_mutex_lock(&block->logical_block_lock);
-    if (!block->page_maps) {
-    	block->page_maps = (page_map *)calloc(1, sizeof(page_map));
-        block->page_maps->logical_page_addr = logical_page_addr;
-        block->page_maps->physical_addr = physical_addr;
-        block->page_maps->page_zone_info = info->curr_log_zone;
-	    pthread_mutex_unlock(&block->logical_block_lock);
-        return;
-    }
-    if (block->page_maps->logical_page_addr == logical_page_addr) {
-        //Update log counter
-        decrease_zone_num_valid_page(block->page_maps->page_zone_info, 1);
-        block->page_maps->physical_addr = physical_addr;
-        block->page_maps->page_zone_info = info->curr_log_zone;
-        pthread_mutex_unlock(&block->logical_block_lock);
-        return;
-    }
-    if (block->page_maps->logical_page_addr > logical_page_addr) {
-        page_map *tmp = (page_map *)calloc(1, sizeof(page_map));
-        tmp->next = block->page_maps;
-        block->page_maps = tmp;
-        tmp->logical_page_addr = logical_page_addr;
-        tmp->physical_addr = physical_addr;
-        tmp->page_zone_info = info->curr_log_zone;
-        pthread_mutex_unlock(&block->logical_block_lock);
-        return;
-    }
-    page_map *ptr = block->page_maps;
-    while (ptr->next) {
-        if (ptr->next->logical_page_addr == logical_page_addr) {
-            //Update log counter
-            decrease_zone_num_valid_page(ptr->next->page_zone_info, 1);
-	        ptr->next->physical_addr = physical_addr;
-            ptr->next->page_zone_info = info->curr_log_zone;
-	        pthread_mutex_unlock(&block->logical_block_lock);
-	        return;
-        } else if (ptr->next->logical_page_addr > logical_page_addr) {
-            page_map *tmp =  (page_map *)calloc(1, sizeof(page_map));
-            tmp->next = ptr->next;
-            ptr->next = tmp;
-            tmp->logical_page_addr = logical_page_addr;
-            tmp->physical_addr = physical_addr;
-            tmp->page_zone_info = info->curr_log_zone;
-	        pthread_mutex_unlock(&block->logical_block_lock);
-            return;
-        }
-        ptr = ptr->next;
-    }
-    ptr->next = (page_map *)calloc(1, sizeof(page_map));
-    ptr->next->logical_page_addr = logical_page_addr;
-    ptr->next->physical_addr = physical_addr;
-    ptr->next->page_zone_info = info->curr_log_zone;
-    pthread_mutex_unlock(&block->logical_block_lock);
-}
-
-static int read_from_zns(zns_info *info, unsigned long long physical_addr,
-                         void *buffer, uint32_t size)
-{
-    unsigned short num_pages = size / info->zns_page_size;
-    nvme_read(info->fd, info->nsid, physical_addr, num_pages - 1,
-              0U, 0U, 0U, 0U, 0U,size, buffer, 0U, NULL);
-    return errno;
-}
-
-static int append_to_data_zone(zns_info *info, unsigned long long saddr,
-                               void *buffer, uint32_t size)
-{
-    uint32_t appended_size = 0U;
-    while (appended_size < size) {
-        unsigned long long physical_addr = 0ULL;
-        uint32_t curr_append_size = info->zasl;
-        if (curr_append_size > size - appended_size)
-            curr_append_size = size - appended_size;
-        unsigned short num_curr_append_pages = curr_append_size / info->zns_page_size;
-        nvme_zns_append(info->fd, info->nsid, saddr, num_curr_append_pages - 1,
-                        0U, 0U, 0U, 0U, curr_append_size,
-                        (char *)buffer + appended_size, 0U, NULL, &physical_addr);
-        if (errno)
-            return errno;
-        appended_size += curr_append_size;
-    }
-    return errno;
-}
-
-static int append_to_log_zone(zns_info *info, uint64_t logical_page_addr,
-                              void *buffer, uint32_t size)
-{
-    uint32_t appended_size = 0U;
-    while (appended_size < size) {
-        unsigned long long physical_addr = 0ULL;
-        bool need_to_change_log_zone = true;
-        uint32_t curr_append_size = (info->zone_num_pages -
-                                    info->curr_log_zone->write_ptr) *
-                                    info->zns_page_size;
-        if (curr_append_size > info->zasl) {
-            curr_append_size = info->zasl;
-            need_to_change_log_zone = false;
-        }
-        if (curr_append_size > size - appended_size) {
-            curr_append_size = size - appended_size;
-            need_to_change_log_zone = false;
-        }
-        unsigned short num_curr_append_pages = curr_append_size /
-                                               info->zns_page_size;
-        nvme_zns_append(info->fd, info->nsid, info->curr_log_zone->zone_saddr,
-                        num_curr_append_pages - 1, 0U, 0U, 0U, 0U,
-                        curr_append_size, (char *)buffer + appended_size,
-                        0U, NULL, &physical_addr);
-        if (errno)
-            return errno;
-        for (uint32_t i = 0U; i < num_curr_append_pages;
-             ++i, ++logical_page_addr, ++physical_addr)
-            update_map(info, logical_page_addr, physical_addr);
-        if (need_to_change_log_zone)
-            change_log_zone(info);
-        appended_size += curr_append_size;
-    }
-    return errno;
-}
-
-static void merge(zns_info *info, logical_block *block, zone_info *new_zone)
-{
-    pthread_mutex_lock(&block->logical_block_lock);
-    block->old_page_maps = block->page_maps;
-    block->page_maps = NULL;
-    pthread_mutex_unlock(&block->logical_block_lock);
-    page_map *ptr = block->old_page_maps;
-    zone_info *old_used_data_zone = block->block_map;
-    uint32_t zone_append_page_limit = info->zasl / info->zns_page_size;
-    char * buffer = (char *)calloc(info->zasl, sizeof(char));
-    for (uint32_t offset = 0U; offset < info->zone_num_pages; ++offset) {
-        unsigned long long page_physical_addr = 0ULL;
-        bool have_data = false;
-        bool still_have_data = false;
-        // if data in data zone
-        if (old_used_data_zone) {
-            have_data = true;
-            page_physical_addr = old_used_data_zone->zone_saddr + offset;
-            decrease_zone_write_ptr(old_used_data_zone, 1);
-            if (old_used_data_zone->write_ptr)
-                still_have_data = true;
-        }
-        // if data in log zone
-        if (ptr &&
-            ptr->logical_page_addr == block->logical_block_saddr + offset) {
-            have_data = true;
-            page_physical_addr = ptr->physical_addr;
-            decrease_zone_num_valid_page(ptr->page_zone_info, 1);
-            ptr = ptr->next;
-            if (ptr)
-                still_have_data = true;
-        }
-        if (have_data)
-            read_from_zns(info, page_physical_addr,
-                          buffer + (offset % zone_append_page_limit) * info->zns_page_size,
-                          info->zns_page_size);
-        if (!still_have_data) {
-            append_to_data_zone(info, new_zone->zone_saddr, buffer,
-                                (offset % zone_append_page_limit + 1) * info->zns_page_size);
-            increase_zone_write_ptr(new_zone,
-                                    offset % zone_append_page_limit + 1);
-            break;
-        }
-        if (offset % zone_append_page_limit == zone_append_page_limit - 1) {
-            append_to_data_zone(info, new_zone->zone_saddr,
-                                buffer, info->zasl);
-            increase_zone_write_ptr(new_zone, zone_append_page_limit);
-            memset(buffer, 0, info->zasl);
-        }
-    }
-    free(buffer);
-    pthread_mutex_lock(&block->logical_block_lock);
-    while (block->old_page_maps) {
-        page_map *tmp = block->old_page_maps;
-        block->old_page_maps = block->old_page_maps->next;
-        free(tmp);
-    }
-    block->block_map = new_zone;
-    pthread_mutex_unlock(&block->logical_block_lock);
-    // Append old data zone to free zones list
-    pthread_mutex_lock(&info->zones_list_lock);
-    if (old_used_data_zone) {
-        decrease_zone_write_ptr(old_used_data_zone,
-                                old_used_data_zone->write_ptr);
-        nvme_zns_mgmt_send(info->fd, info->nsid,
-                           old_used_data_zone->zone_saddr, false,
-                           NVME_ZNS_ZSA_RESET, 0U, NULL);
-        if (info->free_zones_list)
-            info->free_zones_list_tail->next = old_used_data_zone;
-        else
-            info->free_zones_list = old_used_data_zone;
-        info->free_zones_list_tail = old_used_data_zone;
-        ++info->num_free_zones;
-    }
-    pthread_mutex_unlock(&info->zones_list_lock);
-}
-
-static void *garbage_collection(void *info_ptr)
-{
-    zns_info *info = (zns_info *)info_ptr;
-    uint32_t index = 0U;
-    while (info->run_gc) {
-        while (info->num_log_zones - info->num_used_log_zones >
-               info->gc_wmark) {
-            if (!info->run_gc)
-                return NULL;
-        }
-        logical_block *block = &info->logical_blocks[index];
-        while(!block->page_maps) {
-	        index = (index + 1) % info->num_data_zones;
-            block = &info->logical_blocks[index];
-            if (!info->run_gc)
-                return NULL;
-        }
-        pthread_mutex_lock(&info->zones_list_lock);
-        // Get free zone and nullify the next
-        zone_info *free_zone = info->free_zones_list;
-        info->free_zones_list = info->free_zones_list->next;
-        if (!info->free_zones_list)
-            info->free_zones_list_tail = NULL;
-        free_zone->next = NULL;
-        --info->num_free_zones;
-        pthread_mutex_unlock(&info->zones_list_lock);
-        if (!info->run_gc)
-            return NULL;
-        // Merge logical block to data zone
-        merge(info, block, free_zone);
-        if (!info->run_gc)
-            return NULL;
-        // Check used log zone valid counter if zero reset and add to free zone list
-        // Remove zone from used_log_zones_list if valid_page is zero and add that zone to free zones list
-        pthread_mutex_lock(&info->zones_list_lock);
-        for (zone_info *prev = NULL, *free = NULL,
-                       *tmp = info->used_log_zones_list; info->run_gc && tmp;) {
-            if (!tmp->num_valid_pages) {
-                // Remove from used_log_zones
-                free = tmp;
-                tmp = tmp->next;
-                if (prev) {
-                    prev->next = tmp;
-                } else {
-                    info->used_log_zones_list = tmp;
-                    if (!tmp)
-                        info->used_log_zones_list_tail = tmp;
-                }
-                free->next = NULL;
-                // reset
-                decrease_zone_write_ptr(free, free->write_ptr);
-                nvme_zns_mgmt_send(info->fd, info->nsid,
-                                   free->zone_saddr, false,
-                                   NVME_ZNS_ZSA_RESET, 0U, NULL);
-                --info->num_used_log_zones;
-                if (info->free_zones_list)
-                    info->free_zones_list_tail->next = free;
-                else
-                    info->free_zones_list = free;
-                info->free_zones_list_tail = free;
-                ++info->num_free_zones;
-            } else {
-                prev = tmp;
-                tmp = tmp->next;
-            }
-        }
-        pthread_mutex_unlock(&info->zones_list_lock);
-        index = (index + 1) % info->num_data_zones;
-    }
-    return NULL;
-}
-
 int init_ss_zns_device(struct zdev_init_params *params,
                        struct user_zns_device **my_dev)
 {
@@ -547,12 +187,12 @@ int init_ss_zns_device(struct zdev_init_params *params,
         printf("Failed to mmap\n");
         return errno;
     }
-    info->mdts = ((1U << (NVME_CAP_MPSMIN(nvme_mmio_read64(regs)) + ctrl.mdts)) - 1) *
+    info->mdts = (1U << (NVME_CAP_MPSMIN(nvme_mmio_read64(regs)) + ctrl.mdts)) *
                  (*my_dev)->lba_size_bytes;
     // set zone_append_size_limit
     struct nvme_zns_id_ctrl id;
     nvme_zns_identify_ctrl(info->fd, &id);
-    info->zasl = ((1U << (NVME_CAP_MPSMIN(nvme_mmio_read64(regs)) + id.zasl)) - 1) *
+    info->zasl = (1U << (NVME_CAP_MPSMIN(nvme_mmio_read64(regs)) + id.zasl)) *
                  (*my_dev)->lba_size_bytes;
     munmap(regs, getpagesize());
     if (errno) {
@@ -600,65 +240,78 @@ int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address,
                      void *buffer, uint32_t size)
 {
     zns_info *info = (zns_info *)my_dev->_private;
-    //FIXME: Proision for contiguos block read, but not written contiguous
     uint32_t logical_page_addr = address / info->zns_page_size;
-    uint32_t index = get_block_index(logical_page_addr, info->zone_num_pages);
-    logical_block *block = &info->logical_blocks[index];
-    pthread_mutex_lock(&block->logical_block_lock);
-    // read data from data zone
-    if (block->block_map) {
-        uint32_t read_size = 0U;
+    //FIXME: Proision for contiguos block read, but not written contiguous
+    while (size) {
+        uint32_t index = get_block_index(logical_page_addr,
+                                         info->zone_num_pages);
+        logical_block *block = &info->logical_blocks[index];
         uint32_t offset = get_data_offset(logical_page_addr,
                                           info->zone_num_pages);
-        while (read_size < size) {
-            uint32_t curr_read_size = info->mdts;
-            if (curr_read_size > size - read_size)
-                curr_read_size = size - read_size;
-            read_from_zns(info, block->block_map->zone_saddr + offset + read_size,
-                          buffer, curr_read_size);
-            read_size += curr_read_size;
+        uint32_t curr_block_read_size = (info->zone_num_pages - offset) *
+                                        info->zns_page_size;
+        if (curr_block_read_size > size)
+            curr_block_read_size = size;
+        pthread_mutex_lock(&block->logical_block_lock);
+        if (block->block_map) {
+            uint32_t read_size = 0U;
+            while (read_size < curr_block_read_size) {
+                uint32_t curr_read_size = info->mdts;
+                if (curr_read_size > curr_block_read_size - read_size)
+                    curr_read_size = curr_block_read_size - read_size;
+                read_from_zns(info,
+                              block->block_map->zone_saddr + offset +
+                              read_size / info->zns_page_size,
+                              (char *)buffer + read_size, curr_read_size);
+                read_size += curr_read_size;
+            }
         }
-    }
-    // read data from log zone
-    unsigned long long curr_start_physical_addr = 0ULL;
-    uint32_t curr_read_offset = 0U;
-    uint32_t curr_read_size = 0U;
-    unsigned long long prev_physical_addr = 0ULL;
-    page_map *curr_page_map = block->page_maps ? block->page_maps :
-                                                 block->old_page_maps;
-    for (uint32_t i = 0U; i < size; i += info->zns_page_size, ++logical_page_addr) {
-        unsigned long long physical_addr = 0ULL;
-        bool get_addr = look_up_map(curr_page_map,
-                                    logical_page_addr, &physical_addr);
-        if (get_addr) {
-            if (!curr_read_size) {
-                curr_start_physical_addr = physical_addr;
-                curr_read_offset = i;
-            } else if (physical_addr - prev_physical_addr != 1) { // if physical address are not continuous
+        unsigned long long prev_physical_addr = 0ULL;
+        unsigned long long curr_start_physical_addr = 0ULL;
+        uint32_t curr_read_offset = 0U;
+        uint32_t curr_read_size = 0U;
+        page_map *curr_page_map = block->page_maps ? block->page_maps :
+                                                     block->old_page_maps;
+        for (uint32_t i = 0U; i < curr_block_read_size;
+             i += info->zns_page_size, ++logical_page_addr) {
+            unsigned long long physical_addr = 0ULL;
+            bool get_addr = look_up_map(curr_page_map,
+                                        logical_page_addr, &physical_addr);
+            if (get_addr) {
+                if (!curr_read_size) {
+                    curr_start_physical_addr = physical_addr;
+                    curr_read_offset = i;
+                } else if (physical_addr - prev_physical_addr != 1) { // if physical address are not continuous
+                    read_from_zns(info, curr_start_physical_addr,
+                                  (char *)buffer + curr_read_offset,
+                                  curr_read_size);
+                    curr_start_physical_addr = physical_addr;
+                    curr_read_offset = i;
+                    curr_read_size = 0U;
+                }
+                curr_read_size += info->zns_page_size;
+                if (curr_read_size == info->mdts) { // if current read size is equal to mdts, then read data from zns
+                    read_from_zns(info, curr_start_physical_addr,
+                                  (char *)buffer + curr_read_offset,
+                                  curr_read_size);
+                    curr_read_size = 0U;
+                } else {
+                    prev_physical_addr = physical_addr;
+                }
+            } else if (curr_read_size) { // if physical address are not continuous
                 read_from_zns(info, curr_start_physical_addr,
-                              (char *)buffer + curr_read_offset, curr_read_size);
-                curr_start_physical_addr = physical_addr;
-                curr_read_offset = i;
+                              (char *)buffer + curr_read_offset,
+                              curr_read_size);
                 curr_read_size = 0U;
             }
-            curr_read_size += info->zns_page_size;
-            if (curr_read_size == info->mdts) { // if current read size is equal to mdts, then read data from zns
-                read_from_zns(info, curr_start_physical_addr,
-                              (char *)buffer + curr_read_offset, curr_read_size);
-                curr_read_size = 0U;
-            } else {
-                prev_physical_addr = physical_addr;
-            }
-        } else if (curr_read_size) { // if physical address are not continuous
+        }
+        if (curr_read_size) // read the rest of data
             read_from_zns(info, curr_start_physical_addr,
                           (char *)buffer + curr_read_offset, curr_read_size);
-            curr_read_size = 0U;
-        }
+        pthread_mutex_unlock(&block->logical_block_lock);
+        buffer = (char *)buffer + curr_block_read_size;
+        size -= curr_block_read_size;
     }
-    if (curr_read_size) // read the rest of data
-        read_from_zns(info, curr_start_physical_addr,
-                      (char *)buffer + curr_read_offset, curr_read_size);
-    pthread_mutex_unlock(&block->logical_block_lock);
     return errno;
 }
 
@@ -666,7 +319,7 @@ int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address,
                       void *buffer, uint32_t size)
 {
     zns_info *info = (zns_info *)my_dev->_private;
-    while (size > 0) {
+    while (size) {
         uint32_t index = get_block_index(address / info->zns_page_size,
                                          info->zone_num_pages);
         logical_block *block = &info->logical_blocks[index];
@@ -770,6 +423,368 @@ int deinit_ss_zns_device(struct user_zns_device *my_dev)
     free(info);
     free(my_dev);
     return 0;
+}
+
+static inline void increase_zone_num_valid_page(zone_info *zone,
+                                                uint32_t num_pages)
+{
+    pthread_mutex_lock(&zone->num_valid_pages_lock);
+    zone->num_valid_pages += num_pages;
+    pthread_mutex_unlock(&zone->num_valid_pages_lock);
+}
+
+static inline void decrease_zone_num_valid_page(zone_info *zone,
+                                                uint32_t num_pages)
+{
+    pthread_mutex_lock(&zone->num_valid_pages_lock);
+    zone->num_valid_pages -= num_pages;
+    pthread_mutex_unlock(&zone->num_valid_pages_lock);
+}
+
+static inline void increase_zone_write_ptr(zone_info *zone,
+                                           uint32_t num_pages)
+{
+    pthread_mutex_lock(&zone->write_ptr_lock);
+    zone->write_ptr += num_pages;
+    pthread_mutex_unlock(&zone->write_ptr_lock);
+}
+
+static inline void decrease_zone_write_ptr(zone_info *zone,
+                                           uint32_t num_pages)
+{
+    pthread_mutex_lock(&zone->write_ptr_lock);
+    zone->write_ptr -= num_pages;
+    pthread_mutex_unlock(&zone->write_ptr_lock);
+}
+
+static inline uint32_t get_block_index(uint32_t key, uint32_t base)
+{
+    return key / base;
+}
+
+static inline uint32_t get_data_offset(uint32_t key, uint32_t base)
+{
+    return key % base;
+}
+
+static void change_log_zone(zns_info *info)
+{
+    pthread_mutex_lock(&info->zones_list_lock); // Lock for changing used_log_zones_list and accessing free zones list;
+    if (info->used_log_zones_list)
+        info->used_log_zones_list_tail->next = info->curr_log_zone;
+    else
+        info->used_log_zones_list = info->curr_log_zone;
+    info->used_log_zones_list_tail = info->curr_log_zone;
+    info->curr_log_zone = NULL;
+    ++info->num_used_log_zones;
+    pthread_mutex_unlock(&info->zones_list_lock);
+    while (info->num_used_log_zones == info->num_log_zones);
+    //Dequeue from free_zone to curr_log_zone;
+    while (!info->curr_log_zone) {
+        pthread_mutex_lock(&info->zones_list_lock);
+        if (info->num_free_zones > 1) {
+            info->curr_log_zone = info->free_zones_list;
+            info->free_zones_list = info->free_zones_list->next;
+            info->curr_log_zone->next = NULL;
+            --info->num_free_zones;
+        }
+        pthread_mutex_unlock(&info->zones_list_lock);
+    }
+}
+
+static bool look_up_map(page_map *maps, uint64_t logical_page_addr,
+                        unsigned long long *physical_addr)
+{
+    //Lock the logical block
+    //Search in log zone
+    for (page_map *head = maps; head; head = head->next) {
+        if (head->logical_page_addr > logical_page_addr)
+            return false;
+        if (head->logical_page_addr == logical_page_addr) {
+            *physical_addr = head->physical_addr;
+            return true;
+        }
+    }
+    return false;
+}
+
+static void update_map(zns_info *info, uint64_t logical_page_addr,
+                       unsigned long long physical_addr)
+{
+    uint32_t index = get_block_index(logical_page_addr, info->zone_num_pages);
+    logical_block *block = &info->logical_blocks[index];
+    increase_zone_num_valid_page(info->curr_log_zone, 1);
+    increase_zone_write_ptr(info->curr_log_zone, 1);
+    //Lock for updating page map
+    pthread_mutex_lock(&block->logical_block_lock);
+    if (!block->page_maps) {
+    	block->page_maps = (page_map *)calloc(1, sizeof(page_map));
+        block->page_maps->logical_page_addr = logical_page_addr;
+        block->page_maps->physical_addr = physical_addr;
+        block->page_maps->page_zone_info = info->curr_log_zone;
+	    pthread_mutex_unlock(&block->logical_block_lock);
+        return;
+    }
+    if (block->page_maps->logical_page_addr == logical_page_addr) {
+        //Update log counter
+        decrease_zone_num_valid_page(block->page_maps->page_zone_info, 1);
+        block->page_maps->physical_addr = physical_addr;
+        block->page_maps->page_zone_info = info->curr_log_zone;
+        pthread_mutex_unlock(&block->logical_block_lock);
+        return;
+    }
+    if (block->page_maps->logical_page_addr > logical_page_addr) {
+        page_map *tmp = (page_map *)calloc(1, sizeof(page_map));
+        tmp->next = block->page_maps;
+        block->page_maps = tmp;
+        tmp->logical_page_addr = logical_page_addr;
+        tmp->physical_addr = physical_addr;
+        tmp->page_zone_info = info->curr_log_zone;
+        pthread_mutex_unlock(&block->logical_block_lock);
+        return;
+    }
+    page_map *ptr = block->page_maps;
+    while (ptr->next) {
+        if (ptr->next->logical_page_addr == logical_page_addr) {
+            //Update log counter
+            decrease_zone_num_valid_page(ptr->next->page_zone_info, 1);
+	        ptr->next->physical_addr = physical_addr;
+            ptr->next->page_zone_info = info->curr_log_zone;
+	        pthread_mutex_unlock(&block->logical_block_lock);
+	        return;
+        } else if (ptr->next->logical_page_addr > logical_page_addr) {
+            page_map *tmp =  (page_map *)calloc(1, sizeof(page_map));
+            tmp->next = ptr->next;
+            ptr->next = tmp;
+            tmp->logical_page_addr = logical_page_addr;
+            tmp->physical_addr = physical_addr;
+            tmp->page_zone_info = info->curr_log_zone;
+	        pthread_mutex_unlock(&block->logical_block_lock);
+            return;
+        }
+        ptr = ptr->next;
+    }
+    ptr->next = (page_map *)calloc(1, sizeof(page_map));
+    ptr->next->logical_page_addr = logical_page_addr;
+    ptr->next->physical_addr = physical_addr;
+    ptr->next->page_zone_info = info->curr_log_zone;
+    pthread_mutex_unlock(&block->logical_block_lock);
+}
+
+static int read_from_zns(zns_info *info, unsigned long long physical_addr,
+                         void *buffer, uint32_t size)
+{
+    unsigned short num_pages = size / info->zns_page_size;
+    nvme_read(info->fd, info->nsid, physical_addr, num_pages - 1,
+              0U, 0U, 0U, 0U, 0U, size, buffer, 0U, NULL);
+    return errno;
+}
+
+static int append_to_data_zone(zns_info *info, unsigned long long saddr,
+                               void *buffer, uint32_t size)
+{
+    uint32_t appended_size = 0U;
+    while (appended_size < size) {
+        unsigned long long physical_addr = 0ULL;
+        uint32_t curr_append_size = info->zasl;
+        if (curr_append_size > size - appended_size)
+            curr_append_size = size - appended_size;
+        unsigned short num_curr_append_pages = curr_append_size / info->zns_page_size;
+        nvme_zns_append(info->fd, info->nsid, saddr, num_curr_append_pages - 1,
+                        0U, 0U, 0U, 0U, curr_append_size,
+                        (char *)buffer + appended_size, 0U, NULL, &physical_addr);
+        if (errno)
+            return errno;
+        appended_size += curr_append_size;
+    }
+    return errno;
+}
+
+static int append_to_log_zone(zns_info *info, uint64_t logical_page_addr,
+                              void *buffer, uint32_t size)
+{
+    uint32_t appended_size = 0U;
+    while (appended_size < size) {
+        unsigned long long physical_addr = 0ULL;
+        bool need_to_change_log_zone = true;
+        uint32_t curr_append_size = (info->zone_num_pages -
+                                     info->curr_log_zone->write_ptr) *
+                                    info->zns_page_size;
+        if (curr_append_size > info->zasl) {
+            curr_append_size = info->zasl;
+            need_to_change_log_zone = false;
+        }
+        if (curr_append_size > size - appended_size) {
+            curr_append_size = size - appended_size;
+            need_to_change_log_zone = false;
+        }
+        unsigned short num_curr_append_pages = curr_append_size /
+                                               info->zns_page_size;
+        nvme_zns_append(info->fd, info->nsid, info->curr_log_zone->zone_saddr,
+                        num_curr_append_pages - 1, 0U, 0U, 0U, 0U,
+                        curr_append_size, (char *)buffer + appended_size,
+                        0U, NULL, &physical_addr);
+        if (errno)
+            return errno;
+        for (uint32_t i = 0U; i < num_curr_append_pages;
+             ++i, ++logical_page_addr, ++physical_addr)
+            update_map(info, logical_page_addr, physical_addr);
+        if (need_to_change_log_zone)
+            change_log_zone(info);
+        appended_size += curr_append_size;
+    }
+    return errno;
+}
+
+static void merge(zns_info *info, logical_block *block, zone_info *new_zone)
+{
+    pthread_mutex_lock(&block->logical_block_lock);
+    block->old_page_maps = block->page_maps;
+    block->page_maps = NULL;
+    pthread_mutex_unlock(&block->logical_block_lock);
+    page_map *ptr = block->old_page_maps;
+    zone_info *old_used_data_zone = block->block_map;
+    uint32_t zone_append_page_limit = info->zasl / info->zns_page_size;
+    char * buffer = (char *)calloc(info->zasl, sizeof(char));
+    for (uint32_t offset = 0U; offset < info->zone_num_pages; ++offset) {
+        unsigned long long page_physical_addr = 0ULL;
+        bool have_data = false;
+        bool still_have_data = false;
+        // if data in data zone
+        if (old_used_data_zone) {
+            have_data = true;
+            page_physical_addr = old_used_data_zone->zone_saddr + offset;
+            decrease_zone_write_ptr(old_used_data_zone, 1);
+            if (old_used_data_zone->write_ptr)
+                still_have_data = true;
+        }
+        // if data in log zone
+        if (ptr &&
+            ptr->logical_page_addr == block->logical_block_saddr + offset) {
+            have_data = true;
+            page_physical_addr = ptr->physical_addr;
+            decrease_zone_num_valid_page(ptr->page_zone_info, 1);
+            ptr = ptr->next;
+            if (ptr)
+                still_have_data = true;
+        }
+        if (have_data)
+            read_from_zns(info, page_physical_addr,
+                          buffer + (offset % zone_append_page_limit) * info->zns_page_size,
+                          info->zns_page_size);
+        if (!still_have_data) {
+            append_to_data_zone(info, new_zone->zone_saddr, buffer,
+                                (offset % zone_append_page_limit + 1) * info->zns_page_size);
+            increase_zone_write_ptr(new_zone,
+                                    offset % zone_append_page_limit + 1);
+            break;
+        }
+        if (offset % zone_append_page_limit == zone_append_page_limit - 1) {
+            append_to_data_zone(info, new_zone->zone_saddr,
+                                buffer, info->zasl);
+            increase_zone_write_ptr(new_zone, zone_append_page_limit);
+            memset(buffer, 0, info->zasl);
+        }
+    }
+    free(buffer);
+    pthread_mutex_lock(&block->logical_block_lock);
+    while (block->old_page_maps) {
+        page_map *tmp = block->old_page_maps;
+        block->old_page_maps = block->old_page_maps->next;
+        free(tmp);
+    }
+    block->block_map = new_zone;
+    pthread_mutex_unlock(&block->logical_block_lock);
+    // Append old data zone to free zones list
+    if (old_used_data_zone) {
+        decrease_zone_write_ptr(old_used_data_zone,
+                                old_used_data_zone->write_ptr);
+        nvme_zns_mgmt_send(info->fd, info->nsid,
+                           old_used_data_zone->zone_saddr, false,
+                           NVME_ZNS_ZSA_RESET, 0U, NULL);
+        pthread_mutex_lock(&info->zones_list_lock);
+        if (info->free_zones_list)
+            info->free_zones_list_tail->next = old_used_data_zone;
+        else
+            info->free_zones_list = old_used_data_zone;
+        info->free_zones_list_tail = old_used_data_zone;
+        ++info->num_free_zones;
+        pthread_mutex_unlock(&info->zones_list_lock);
+    }
+}
+
+static void *garbage_collection(void *info_ptr)
+{
+    zns_info *info = (zns_info *)info_ptr;
+    uint32_t index = 0U;
+    while (info->run_gc) {
+        while (info->num_log_zones - info->num_used_log_zones >
+               info->gc_wmark) {
+            if (!info->run_gc)
+                return NULL;
+        }
+        logical_block *block = &info->logical_blocks[index];
+        while(!block->page_maps) {
+	        index = (index + 1) % info->num_data_zones;
+            block = &info->logical_blocks[index];
+            if (!info->run_gc)
+                return NULL;
+        }
+        pthread_mutex_lock(&info->zones_list_lock);
+        // Get free zone and nullify the next
+        zone_info *free_zone = info->free_zones_list;
+        info->free_zones_list = info->free_zones_list->next;
+        if (!info->free_zones_list)
+            info->free_zones_list_tail = NULL;
+        free_zone->next = NULL;
+        --info->num_free_zones;
+        pthread_mutex_unlock(&info->zones_list_lock);
+        if (!info->run_gc)
+            return NULL;
+        // Merge logical block to data zone
+        merge(info, block, free_zone);
+        if (!info->run_gc)
+            return NULL;
+        // Check used log zone valid counter if zero reset and add to free zone list
+        // Remove zone from used_log_zones_list if valid_page is zero and add that zone to free zones list
+        for (zone_info *prev = NULL, *free = NULL,
+                       *curr = info->used_log_zones_list; info->run_gc && curr; ) {
+            if (!curr->num_valid_pages) {
+                // reset
+                decrease_zone_write_ptr(curr, curr->write_ptr);
+                nvme_zns_mgmt_send(info->fd, info->nsid,
+                                   curr->zone_saddr, false,
+                                   NVME_ZNS_ZSA_RESET, 0U, NULL);
+                pthread_mutex_lock(&info->zones_list_lock);
+                // Remove from used_log_zones
+                free = curr;
+                curr = curr->next;
+                if (prev) {
+                    prev->next = curr;
+                    if (free == info->used_log_zones_list_tail)
+                        info->used_log_zones_list_tail = prev;
+                } else {
+                    info->used_log_zones_list = curr;
+                    if (!info->used_log_zones_list)
+                        info->used_log_zones_list_tail = NULL;
+                }
+                free->next = NULL;
+                --info->num_used_log_zones;
+                if (info->free_zones_list)
+                    info->free_zones_list_tail->next = free;
+                else
+                    info->free_zones_list = free;
+                info->free_zones_list_tail = free;
+                ++info->num_free_zones;
+                pthread_mutex_unlock(&info->zones_list_lock);
+            } else {
+                prev = curr;
+                curr = curr->next;
+            }
+        }
+        index = (index + 1) % info->num_data_zones;
+    }
+    return NULL;
 }
 
 }

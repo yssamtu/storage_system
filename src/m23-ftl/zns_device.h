@@ -24,7 +24,6 @@ SOFTWARE.
 #define STOSYS_PROJECT_ZNS_DEVICE_H
 
 #include <cstdint>
-#include <cstdbool>
 
 extern "C" {
 
