@@ -29,6 +29,69 @@ SOFTWARE.
 #include <utils.h>
 
 namespace ROCKSDB_NAMESPACE {
+
+    int Load_From_NVM(uint64_t addr, void *buffer, uint64_t size) {
+	return 0;
+    }
+
+    int LookupMap_HashFunction(void *data) {
+   	 return *((int*) data) / LOOKUP_MAP_SIZE;
+    }
+
+    int LookupMap_Lookup(MYFS *FSObj, std::string id, void *ptr) {
+    
+    }
+
+    int LookupMap_Insert(MYFS *FSObj, std::string id, void *ptr) {
+    
+    }
+
+    int Load_Children(Inode *ptr, std::string entitiyName, std::vector<dir_data> *children, bool loadChildren) {
+    	//Check no of children and load it
+	uint64_t childrens_count = ptr->FileSize;
+
+    }
+
+    void Get_ParentPath(std::string path, std::string &parent) {
+    
+    }
+
+    void Get_EntityName(std::string path, string::string &entityName) {
+    
+    }
+
+    int Get_Path_Inode(MYFS *FSObj, std::string path, Inode *ptr) {
+        //Check if path in lookupMap cache
+	int isPresent = LookupMap_Lookup(FSObj, path, ptr);
+	if(!isPresent)
+	    return 0;
+
+	//if not : Get_Path_Inode for parent dir
+	std::string parent;
+	Inode *parentInode;
+
+	Get_ParentPath(path, parent);
+	isPresent = Get_Path_Inode(FSObj, parent, parentInode);
+	if(isPresent)
+	    return -1;
+	//Read parent dir and get asked inode number
+	if(parentInode->FileSize == 0)
+	    return -1;
+
+	//Get children
+	std::string entityName;
+	Get_EntityName(path, entityName);
+	uint32_t index = Load_Children(parentInode, entityName, NULL, false);
+	//Load the inode;
+	uint64_t address = SUPER_BLOCK_SIZE + index * INODE_SIZE;
+	ptr = (Inode *) calloc(1, sizeof(Inode));
+	isPresent = Load_From_NVM(address, ptr, (uint64_t) INODE_SIZE);
+
+	//Put it in lookup Map    	
+    	isPresent = LookupMap_Insert(FSObj, path, ptr);
+    }
+
+
     S2FileSystem::S2FileSystem(std::string uri_db_path, bool debug) {
         FileSystem::Default();
         std::string sdelimiter = ":";
@@ -53,6 +116,29 @@ namespace ROCKSDB_NAMESPACE {
         assert(this->_zns_dev->capacity_bytes != 0);
         ss_dprintf(DBG_FS_1, "device %s is opened and initialized, reported LBA size is %u and capacity %lu \n",
                    device.c_str(), this->_zns_dev->lba_size_bytes, this->_zns_dev->capacity_bytes);
+    
+    
+    	//INIT File System
+	//TODO: In case of persistency; Read following data from Super block
+	//Init Bitmaps from disk
+	if (debug)
+	    std::cout<<"Init MYFS"<<std::endl;
+	//this->FileSystemObj;
+	this->FileSystemObj.FileSystemCapacity = this->_zns_dev->capacity_bytes;
+	this->FileSystemObj.LogicalBlockSize = this->_zns_dev->lba_size_bytes;
+	//We reserve a single block as super block and MAX_INODE_COUNT as 
+	this->FileSystemObj.DataBlockCount = (this->FileSystemObj.FileSystemCapacity / this->FileSystemObj.LogicalBlockSize
+					    - (MAX_INODE_COUNT + 1));
+	if (debug)
+	    std::cout<<"File System params : "<<this->FileSystemObj.FileSystemCapacity<<" "<<
+		    this->FileSystemObj.LogicalBlockSize<<" "<<this->FileSystemObj.DataBlockCount<<std::endl;
+
+	//Init Data blocks bitmap
+	this->FileSystemObj.DataBitMap = (bool*) calloc(this->FileSystemObj.DataBlockCount, sizeof(bool));
+	
+	//Init root inode
+	//TODO: In case of persistency check if already present in disk
+	this->FileSystemObj.rootEntry = (Inode *) calloc(1,sizeof(Inode));    
     }
 
     S2FileSystem::~S2FileSystem() {

@@ -33,6 +33,9 @@ SOFTWARE.
 
 
 #define LOOKUP_MAP_SIZE 1000
+#define MAX_INODE_COUNT 255
+#define INODE_SIZE 4096
+#define SUPER_BLOCK_SIZE 4096
 namespace ROCKSDB_NAMESPACE {
 
     struct mapEntries {
@@ -40,10 +43,6 @@ namespace ROCKSDB_NAMESPACE {
        void *ptr;
        mapEntries *chain;
     };
-
-    struct MYFS {
-       mapEntries *LookupMap[LOOKUP_MAP_SIZE]; //Map type to void ptrs;
-    };    
 
     struct Inode {
        char EntityName[239];
@@ -66,15 +65,40 @@ namespace ROCKSDB_NAMESPACE {
     struct Dir {
         dir_data Entities[16];
     };	
-	
+
+    struct MYFS {
+       mapEntries *LookupCache[LOOKUP_MAP_SIZE]; //Map type to void ptrs;
+       bool InodeBitMap[MAX_INODE_COUNT];
+       bool *DataBitMap;
+       uint64_t DataBlockCount;
+       uint64_t FileSystemCapacity;
+       uint32_t LogicalBlockSize;
+       Inode *rootEntry;
+    };
+
+
+    int Load_From_NVM(uint64_t address, void *ptr, uint64_t size);
+    int Store_To_NVM();
+    int Read_User_Data();
+    void Get_ParentPath(std::string path, std::string &parent);
+    void Get_EntityName(std::string path, std::string &entityName);
+    void Load_Childrens(Inode *ptr, std::string entityName, std::vector<dir_data> *children, bool loadChildren);
+    int Get_Path_Inode(MYFS *FSObj, std::string path, Inode *ptr);
+    int LookupMap_HashFunction(void *data);
+
     class MYFS_File {
         private:
-           int inode;
            char *fileName;
+	   bool created;
+	   struct Inode *ptr;
+	   void *curr_data_ptr;
+	   MYFS *FSObj;
 	public:
-           IOStatus Read();
-           IOStatus Write();
-           IOStatus Close();
+	   MYFS_File();
+	   ~MYFS_File();
+           int Read();
+           int Write();
+           int Close();
     };
     
 
@@ -83,11 +107,10 @@ namespace ROCKSDB_NAMESPACE {
      */
     class MYFS_SequentialFile : public FSSequentialFile {
     	private:
-	    std::string filename;
-	    MYFS_File *fp;
+	    MYFS_File fp;
 	    uint64_t buffer_alignment_size;
 	public:
-	    MYFS_SequentialFile(const std::string& fname, MYFS_File *fp);
+	    MYFS_SequentialFile(const std::string& fname, MYFS *FSObj);
 	    virtual ~MYFS_SequentialFile();
 	    virtual IOStatus Read(size_t n,const IOOptions& opts, Slice* result,
 			         char* scratch, IODebugContext* dbg) override;
@@ -216,6 +239,7 @@ namespace ROCKSDB_NAMESPACE {
         struct user_zns_device *_zns_dev;
         std::string _uri;
         const std::string _fs_delimiter = "/";
+    	struct MYFS FileSystemObj;
     };
 }
 
