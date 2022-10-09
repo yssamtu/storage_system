@@ -27,8 +27,50 @@ SOFTWARE.
 #include "rocksdb/io_status.h"
 #include "rocksdb/file_system.h"
 #include "rocksdb/status.h"
+#include <zns_device.h>
+/*
+class MYFS_File : class FSSequentialFile {
+	public:
+                MYFS_File();
+                ~MYFS_File();
+                IOStatus Read();
+                IOStatus Write();
+                IOStatus Close();
+	private:
+                int fd;
+                int inode;
+                char *file;
+};
+*/
 
 namespace ROCKSDB_NAMESPACE {
+	/*
+    
+	class MYFS_SequentialFile : public FSSequentialFile{
+        private:
+                std::string filename_;
+                FILE* file_;
+                int fd_;
+                bool use_direct_io_;
+                size_t logical_sector_size_;
+
+        public:
+                MYFS_SequentialFile(const std::string& fname, int fd);
+                virtual ~MYFS_SequentialFile();
+
+  virtual IOStatus Read(size_t n, const IOOptions& opts, Slice* result,
+                        char* scratch, IODebugContext* dbg) override;
+  virtual IOStatus PositionedRead(uint64_t offset, size_t n,
+                                  const IOOptions& opts, Slice* result,
+                                  char* scratch, IODebugContext* dbg) override;
+  virtual IOStatus Skip(uint64_t n) override;
+  //virtual IOStatus InvalidateCache(size_t offset, size_t length) override;
+  virtual bool use_direct_io() const override { return use_direct_io_; }
+  virtual size_t GetRequiredBufferAlignment() const override {
+    return logical_sector_size_;
+  }
+    };
+*/
     class DummyFSForward : public FileSystem {
     public:
         // No copying allowed
@@ -123,7 +165,8 @@ namespace ROCKSDB_NAMESPACE {
         IOStatus ReuseWritableFile(const std::string &fname, const std::string &old_fname, const FileOptions &file_opts,
                                    std::unique_ptr<FSWritableFile> *result, IODebugContext *dbg);
     private:
-        std::string get_seq_id();
+        struct user_zns_device *_zns_dev;
+	std::string get_seq_id();
         std::shared_ptr<FileSystem> _private_fs;
         std::atomic<int> _seq_id{};
         std::string _name;

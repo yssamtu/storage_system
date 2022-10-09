@@ -42,6 +42,7 @@ namespace ROCKSDB_NAMESPACE {
         this->_name = this->_name.append(this->_private_fs->Name());
         this->_ss.str("");
         this->_ss.clear();
+	
     }
 
     const char *DummyFSForward::Name() const {
@@ -52,10 +53,23 @@ namespace ROCKSDB_NAMESPACE {
         this->_ss.str("");
         this->_ss.clear();
         this->_ss << " call_seq: " << this->_seq_id++ << " tid: " << std::hash<std::thread::id>{}(std::this_thread::get_id()) << " ";
-        return this->_ss.str();
+	return this->_ss.str();
     }
 
 
+/*
+    MYFS_SequentialFile::MYFS_SequentialFile(const std::string& fname, int fd){}
+    MYFS_SequentialFile::~MYFS_SequentialFile(){}
+
+  IOStatus MYFS_SequentialFile::Read(size_t n, const IOOptions& opts, Slice* result,
+                        char* scratch, IODebugContext* dbg){std::cout<<"MYSEQ Read"<<std::endl;return IOStatus::OK();}
+  IOStatus MYFS_SequentialFile::PositionedRead(uint64_t offset, size_t n,
+                                  const IOOptions& opts, Slice* result,
+                                  char* scratch, IODebugContext* dbg){std::cout<<"MYSEQ PRead"<<std::endl;return IOStatus::OK();}
+  IOStatus MYFS_SequentialFile::Skip(uint64_t n){std::cout<<"MYSEQ Skip"<<std::endl;return IOStatus::OK();}
+  //IOStatus MYFS_SequentialFile::InvalidateCache(size_t offset, size_t length){}
+
+*/
 // Create a brand new sequentially-readable file with the specified name.
 // On success, stores a pointer to the new file in *result and returns OK.
 // On failure stores nullptr in *result and returns non-OK.  If the file does
@@ -67,7 +81,13 @@ namespace ROCKSDB_NAMESPACE {
                                                std::unique_ptr<FSSequentialFile> *result,
                                                IODebugContext *dbg) {
         std::cout << get_seq_id() << " func: " << __FUNCTION__ << " line: " << __LINE__ << " " << std::endl;
-        return this->_private_fs->NewSequentialFile(fname, file_opts, result, dbg);
+	result->reset();
+        //int fid; //open("");
+	//result->reset(new MYFS_SequentialFile(fname, 100));
+	//IOStatus stat;
+	//return stat;
+	std::cout << "New seq file : "<<fname<<std::endl;
+	return this->_private_fs->NewSequentialFile(fname, file_opts, result, dbg);
     }
     
 // Create a brand new random access read-only file with the
@@ -82,7 +102,8 @@ namespace ROCKSDB_NAMESPACE {
             std::unique_ptr<FSRandomAccessFile> *result,
             IODebugContext *dbg) {
         std::cout << get_seq_id() << " func: " << __FUNCTION__ << " line: " << __LINE__ << " " << std::endl;
-        return this->_private_fs->NewRandomAccessFile(fname, file_opts, result, dbg);
+	std::cout << "Random access file : "<<fname<<std::endl;
+	return this->_private_fs->NewRandomAccessFile(fname, file_opts, result, dbg);
     }
 
 // Create an object that writes to a new file with the specified
@@ -97,7 +118,8 @@ namespace ROCKSDB_NAMESPACE {
                                              std::unique_ptr<FSWritableFile> *result,
                                              IODebugContext *dbg) {
         std::cout << get_seq_id() << " func: " << __FUNCTION__ << " line: " << __LINE__ << " " << std::endl;
-        return this->_private_fs->NewWritableFile(fname, file_opts, result, dbg);
+	std::cout << "Writable file : "<<fname<<std::endl;
+	return this->_private_fs->NewWritableFile(fname, file_opts, result, dbg);
     }
 
 // Create an object that writes to a new file with the specified
@@ -159,7 +181,8 @@ namespace ROCKSDB_NAMESPACE {
                                           std::unique_ptr<FSDirectory> *result,
                                           IODebugContext *dbg) {
         std::cout << get_seq_id() << " func: " << __FUNCTION__ << " line: " << __LINE__ << " " << std::endl;
-        return this->_private_fs->NewDirectory(name, io_opts, result, dbg);
+	std::cout << "XXXXXXXXXXXXXXXXXXXXXXXXXXXX : "<<name<<std::endl;
+	return this->_private_fs->NewDirectory(name, io_opts, result, dbg);
     }
 
 // Returns OK if the named file exists.
@@ -171,7 +194,10 @@ namespace ROCKSDB_NAMESPACE {
                                         const IOOptions &options,
                                         IODebugContext *dbg) {
         std::cout << get_seq_id() << " func: " << __FUNCTION__ << " line: " << __LINE__ << " " << std::endl;
-        return this->_private_fs->FileExists(fname, options, dbg);
+	std::cout << "Check if file exist : " << fname;
+	IOStatus stat = this->_private_fs->FileExists(fname, options, dbg);
+	std::cout << std::endl;
+	return stat;
     }
 
 // Store in *result the names of the children of the specified directory.
@@ -234,7 +260,8 @@ namespace ROCKSDB_NAMESPACE {
                                                 const IOOptions &options,
                                                 IODebugContext *dbg) {
         std::cout << get_seq_id() << " func: " << __FUNCTION__ << " line: " << __LINE__ << " " << std::endl;
-        return this->_private_fs->CreateDirIfMissing(dirname, options, dbg);
+	std::cout << "Create dir path : "<<dirname<<std::endl;
+	return this->_private_fs->CreateDirIfMissing(dirname, options, dbg);
     }
 
 // Delete the specified directory.
@@ -249,7 +276,8 @@ namespace ROCKSDB_NAMESPACE {
                                          const IOOptions &options, uint64_t *file_size,
                                          IODebugContext *dbg) {
         std::cout << get_seq_id() << " func: " << __FUNCTION__ << " line: " << __LINE__ << " " << std::endl;
-        return this->_private_fs->GetFileSize(fname, options, file_size, dbg);
+	std::cout << "File size : "<< fname << std::endl;
+	return this->_private_fs->GetFileSize(fname, options, file_size, dbg);
     }
 
 // Store the last modification time of fname in *file_mtime.
@@ -266,7 +294,8 @@ namespace ROCKSDB_NAMESPACE {
                                         const IOOptions &options,
                                         IODebugContext *dbg) {
         std::cout << get_seq_id() << " func: " << __FUNCTION__ << " line: " << __LINE__ << " " << std::endl;
-        return this->_private_fs->RenameFile(src, target, options, dbg);
+	std::cout << "Rename file : "<<src<<" "<<target<<std::endl;
+	return this->_private_fs->RenameFile(src, target, options, dbg);
     }
 
 // Hard Link file src to target.
@@ -310,7 +339,10 @@ namespace ROCKSDB_NAMESPACE {
     IOStatus DummyFSForward::LockFile(const std::string &fname, const IOOptions &options,
                                       FileLock **lock, IODebugContext *dbg) {
         std::cout << get_seq_id() << " func: " << __FUNCTION__ << " line: " << __LINE__ << " " << std::endl;
-        return this->_private_fs->LockFile(fname, options, lock, dbg);
+	std::cout << "Lock the file : "<<fname<<  std::endl;
+	//return this->_private_fs->LockFile(fname, options, lock, dbg);
+    	IOStatus stat;
+	return stat;
     }
 
 // Release the lock acquired by a previous successful call to LockFile.
@@ -319,7 +351,10 @@ namespace ROCKSDB_NAMESPACE {
     IOStatus DummyFSForward::UnlockFile(FileLock *lock, const IOOptions &options,
                                         IODebugContext *dbg) {
         std::cout << get_seq_id() << " func: " << __FUNCTION__ << " line: " << __LINE__ << " " << std::endl;
-        return this->_private_fs->UnlockFile(lock, options, dbg);
+        //std::cout << "unlock the file : "<<fname<<  std::endl;
+	//return this->_private_fs->UnlockFile(lock, options, dbg);
+    	IOStatus stat;
+	return stat;
     }
 
 // *path is set to a temporary directory that can be used for testing. It may
@@ -348,7 +383,11 @@ namespace ROCKSDB_NAMESPACE {
                                              std::string *output_path,
                                              IODebugContext *dbg) {
         std::cout << get_seq_id() << " func: " << __FUNCTION__ << " line: " << __LINE__ << " " << std::endl;
-        return this->_private_fs->GetAbsolutePath(db_path,options, output_path, dbg);
+	IOStatus stat;
+	//stat = this->_private_fs->GetAbsolutePath(db_path,options, output_path, dbg);
+    	*output_path = db_path.substr(0,db_path.size()-1);
+	std::cout << "Abs Path : " << db_path <<" "<<*output_path << std::endl;
+	return stat;
     }
 
 // Get the amount of free disk space
