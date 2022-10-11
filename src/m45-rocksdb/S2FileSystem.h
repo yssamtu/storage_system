@@ -90,23 +90,26 @@ namespace ROCKSDB_NAMESPACE
         user_zns_device *zns;
     };
 
+    /*
     int Load_From_NVM(MYFS *FSObj, uint64_t address, void *ptr, uint64_t size);
     int Store_To_NVM(MYFS *FSObj, uint64_t address, void *ptr, uint64_t size);
     void Get_ParentPath(std::string path, std::string &parent);
     void Get_EntityName(std::string path, std::string &entityName);
-    void Load_Childrens(Inode *ptr, std::string entityName, std::vector<std::string> *children, bool loadChildren);
+    //void Load_Childrens(Inode *ptr, std::string entityName, std::vector<std::string> *children, bool loadChildren);
     // int Get_Path_Inode(MYFS *FSObj, std::string path, Inode *ptr);
     int LookupMap_HashFunction(void *data);
-
+    */
+    
+    
     class MYFS_File
     {
     private:
         struct Inode *ptr;
-        uint64_t curr_offset;
         MYFS *FSObj;
+	    uint64_t curr_read_offset;
 
     public:
-        MYFS_File(std::string filePath);
+        MYFS_File(std::string filePath, MYFS *FSObj);
         ~MYFS_File();
         int Read(uint64_t size, char *data);
         int PRead(uint64_t offset, uint64_t size, char *data);
@@ -114,6 +117,7 @@ namespace ROCKSDB_NAMESPACE
         int Truncate(uint64_t size);
         int Append(uint64_t size, char *data);
         int PAppend(uint64_t offset, uint64_t size, char *data);
+        int Close();
     };
 
     /*
@@ -122,10 +126,10 @@ namespace ROCKSDB_NAMESPACE
     class MYFS_SequentialFile : public FSSequentialFile
     {
     private:
-        MYFS_File fp;
+        MYFS_File *fp;
 
     public:
-        MYFS_SequentialFile(const std::string &fname, MYFS *FSObj);
+        MYFS_SequentialFile(std::string filePath, MYFS *FSObj);
         virtual ~MYFS_SequentialFile();
         virtual IOStatus Read(size_t n, const IOOptions &opts, Slice *result,
                               char *scratch, IODebugContext *dbg) override{};
@@ -147,7 +151,7 @@ namespace ROCKSDB_NAMESPACE
         MYFS_File fp;
 
     public:
-        MYFS_RandomAccessFile(const std::string &fnmae, MYFS *FSObj);
+        MYFS_RandomAccessFile(const std::string &fname, MYFS *FSObj);
         virtual ~MYFS_RandomAccessFile();
         virtual IOStatus Read(uint64_t offset, size_t n, const IOOptions &opts,
                               Slice *result, char *scratch,

@@ -241,11 +241,9 @@ namespace ROCKSDB_NAMESPACE
         if (path == "/tmp")
         {
             *ptr = FSObj->rootEntry;
-            std::cout << (*ptr)->EntityName << std::endl;
             return 0;
         }
 
-        std::cout << "Path to look for : " << path << std::endl;
         // Check if path in lookupMap cache
         int isPresent = LookupMap_Lookup(FSObj, path, ptr);
         if (!isPresent)
@@ -255,7 +253,6 @@ namespace ROCKSDB_NAMESPACE
         std::string parent;
         Inode *parentInode;
         Get_ParentPath(path, parent);
-        std::cout << "Parent path : " << parent << std::endl;
         isPresent = Get_Path_Inode(FSObj, parent, &parentInode);
         if (isPresent)
             return -1;
@@ -320,7 +317,7 @@ namespace ROCKSDB_NAMESPACE
 
         return 0;
     }
-
+    /*
     void MYFS_DeletePath(MYFS *FSObj, std::string path)
     {
         Inode *ptr;
@@ -335,7 +332,7 @@ namespace ROCKSDB_NAMESPACE
         Get_ParentPath(path, ppath);
         // Delete from lookup map
     }
-
+    */
     int MYFS_CreateFile(MYFS *FSObj, std::string path)
     {
         uint32_t inode_no = get_FreeInode(FSObj);
@@ -489,18 +486,21 @@ namespace ROCKSDB_NAMESPACE
     IOStatus S2FileSystem::NewWritableFile(const std::string &fname, const FileOptions &file_opts,
                                            std::unique_ptr<FSWritableFile> *result, IODebugContext *dbg)
     {
+        std::cout<<"Writable file"<<std::endl;
         return IOStatus::IOError(__FUNCTION__);
     }
 
     IOStatus S2FileSystem::ReopenWritableFile(const std::string &, const FileOptions &, std::unique_ptr<FSWritableFile> *,
                                               IODebugContext *)
     {
+        std::cout<<"Writable file"<<std::endl;
         return IOStatus::IOError(__FUNCTION__);
     }
 
     IOStatus S2FileSystem::NewRandomRWFile(const std::string &, const FileOptions &, std::unique_ptr<FSRandomRWFile> *,
                                            IODebugContext *)
     {
+        std::cout<<"RWWritable file"<<std::endl;
         return IOStatus::IOError(__FUNCTION__);
     }
 
@@ -520,7 +520,7 @@ namespace ROCKSDB_NAMESPACE
     S2FileSystem::NewDirectory(const std::string &name, const IOOptions &io_opts, std::unique_ptr<FSDirectory> *result,
                                IODebugContext *dbg)
     {
-        std::cout<<"New Directory "<<name<<std::endl;
+        std::cout<<"New Directory : "<<name<<std::endl;
         return IOStatus::OK();
     }
 
@@ -555,7 +555,7 @@ namespace ROCKSDB_NAMESPACE
         std::cout << "If dir missing : " << dirname << std::endl;
         std::string dir = dirname.substr(0, dirname.size() - 1);
         int isPresent = Get_Path_Inode(this->FileSystemObj, dir, &ptr);
-        std::cout << "After check : " << std::endl;
+        std::cout << std::endl << std::endl;
         if (isPresent)
             isPresent = MYFS_CreateDir(this->FileSystemObj, dir);
         if (isPresent)
@@ -596,14 +596,15 @@ namespace ROCKSDB_NAMESPACE
 
     IOStatus S2FileSystem::DeleteFile(const std::string &fname, const IOOptions &options, IODebugContext *dbg)
     {
-        MYFS_DeletePath(this->FileSystemObj, fname);
+        //MYFS_DeletePath(this->FileSystemObj, fname);
         return IOStatus::OK();
     }
 
     IOStatus S2FileSystem::NewLogger(const std::string &fname, const IOOptions &io_opts, std::shared_ptr<Logger> *result,
                                      IODebugContext *dbg)
     {
-        return IOStatus::IOError(__FUNCTION__);
+	std::cout<<"Logger \n"<<std::endl;
+	return IOStatus::IOError(__FUNCTION__);
     }
 
     IOStatus S2FileSystem::GetTestDirectory(const IOOptions &options, std::string *path, IODebugContext *dbg)
@@ -712,24 +713,104 @@ namespace ROCKSDB_NAMESPACE
         return IOStatus::IOError(__FUNCTION__);
     }
 
-    // MYFS File
-    // class MYFS_File
-    // {
-    // private:
-    //     struct Inode *ptr;
-    //     uint64_t curr_offset;
-    //     MYFS *FSObj;
 
-    // public:
-    //     MYFS_File(std::string filePath)
-    //     {
-    //     }
-    //     ~MYFS_File();
-    //     int Read(uint64_t size, char *data);
-    //     int PRead(uint64_t offset, uint64_t size, char *data);
-    //     int Seek(uint64_t offset);
-    //     int Truncate(uint64_t size);
-    //     int Append(uint64_t size, char *data);
-    //     int PAppend(uint64_t offset, uint64_t size, char *data);
-    // };
+
+
+   uint64_t get_blocks_addr(MYFS *FSObj, Inode *ptr, uint64_t offset, uint64_t size, std::vector<uint64_t> *addressess, bool forWrite) {
+       
+   }
+
+
+   //MYFS_File definition
+   MYFS_File::MYFS_File(std::string filePath, MYFS *FSObj) 
+   {
+       this->FSObj = FSObj;
+	   Get_Path_Inode(FSObj, filePath, &(this->ptr));
+	   this->curr_read_offset = 0;
+   }
+
+   int MYFS_File::PRead(uint64_t offset, uint64_t size, char *data)
+   {
+       if(ptr->FileSize < offset+size)
+           return -1;
+
+       std::vector<uint64_t> *addresses_to_read;
+       uint64_t addr = get_blocks_addr(this->FSObj, this->ptr, offset, size, addresses_to_read, false);
+       if(!addr)
+           return -1;
+       char *readD = (char *) calloc(addresses_to_read->size(), 4096);
+
+       for(int i=0;i<addresses_to_read->size();i++)
+            Load_From_NVM(this->FSObj, addresses_to_read->at(i),readD+(i*4096), 4096);
+
+       int smargin = offset % 4096;
+       memcpy(data, readD+smargin, size);
+       free(readD);
+       return 0;
+   }
+
+
+   int MYFS_File::Read(uint64_t size, char *data) 
+   {
+        //Check with file size
+        int err = this->PRead(this->curr_read_offset, size, data);
+        if (err)
+            return err;
+        this->curr_read_offset += size;
+        return 0;
+   }
+   
+
+   int MYFS_File::Seek(uint64_t offset)
+   {
+       if(ptr->FileSize < offset)
+           return -1;
+       this->curr_read_offset = offset;
+       return 0;
+   }
+
+   int MYFS_File::Truncate(uint64_t size)
+   {
+        //TODO: Free Data Block
+        this->ptr->FileSize = size;
+        return 0;
+   }
+
+   int MYFS_File::PAppend(uint64_t offset, uint64_t size, char *data) {
+        std::vector<uint64_t> *addresses_to_read;
+        uint64_t addr = get_blocks_addr(this->FSObj, this->ptr, offset, size, addresses_to_read, false);
+        if(!addr)
+            return -1;
+                
+        //Do read-modify-update cycle if smargin is present on 1st address.
+        int smargin = offset % 4096;
+        char *buffer = (char *) calloc(addresses_to_read->size(), 4096);
+        if (smargin) 
+            Load_From_NVM(this->FSObj, addresses_to_read->at(0),buffer, 4096);
+
+        memcpy(buffer+smargin, data, size);
+        for(int i=0; i<addresses_to_read->size(); i++)
+            Store_To_NVM(this->FSObj, addresses_to_read->at(i), data+(i*4096), 4096);
+
+        //Update file size
+        this->ptr->FileSize = offset + size;
+        free(buffer);
+   }
+
+    int MYFS_File::Append(uint64_t size, char *data) {
+        return this->PAppend(ptr->FileSize, size, data);
+    }
+
+    int MYFS_File::Close() {
+        //Flush Inode changes to Disk
+    }
+   
+
+    /*
+    //Def of MYFS_SequentialFile
+    MYFS_SequentialFile::MYFS_SequentialFile(std::string fpath, MYFS *FSObj) {
+        //this->fp = MYFS_File(fpath, FSObj);
+    }
+    */
+    
 }
