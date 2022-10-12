@@ -32,7 +32,7 @@ set(CMAKE_LIBRARY_PATH "/home/$ENV{USER}/local/lib/")
 set(CMAKE_INSTALL_PREFIX "/home/$ENV{USER}/local/")
 
 # Project configuration specific parameters
-set(STOSYS_M45 ON)
+set(STOSYS_M45 OFF)
 set(STOSYS_CMAKE_DEBUG OFF)
 set(STOSYS_ASAN ON)
 
