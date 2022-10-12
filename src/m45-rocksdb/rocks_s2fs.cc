@@ -39,7 +39,7 @@ namespace ROCKSDB_NAMESPACE {
                                      std::string *errmsg) {
                         cout<<"Initialization uri is " << uri << " and errmsg: " << (*errmsg) << endl;
                         // we have two setup - one - s2fs-rocksdb which is just forwarding, then the other that we can use to debug
-                        if(true){
+                        if(false){
                             S2FileSystem *z = new S2FileSystem(uri, true);
                             ret_fs->reset(z);
                         } else {
