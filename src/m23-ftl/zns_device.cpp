@@ -262,6 +262,10 @@ int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address,
         uint32_t index = get_block_index(page_addr, info->zone_num_pages);
         uint32_t offset = get_data_offset(page_addr, info->zone_num_pages);
         logical_block *block = &info->logical_blocks[index];
+        if (block == NULL)
+	        return -1;
+        uint32_t offset = get_data_offset(logical_page_addr,
+                                          info->zone_num_pages);
         uint32_t curr_block_read_size = (info->zone_num_pages - offset) *
                                         info->page_size;
         if (curr_block_read_size > size)
