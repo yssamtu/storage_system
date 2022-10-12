@@ -42,11 +42,12 @@ namespace ROCKSDB_NAMESPACE
 
     struct Inode
     {
-        char EntityName[239];
+        uint32_t Inode_no;
+        char EntityName[235];
         bool IsDir;
         uint64_t FileSize;
         uint64_t Indirect_ptr_lbas;
-        uint64_t Direct_data_lbas[320];
+        uint64_t Direct_data_lbas[480];
     };
 
     struct mapEntries
@@ -58,7 +59,8 @@ namespace ROCKSDB_NAMESPACE
 
     struct Indirect_ptr
     {
-        uint64_t Direct_data_lbas[511];
+        uint64_t Current_addr;
+        uint64_t Direct_data_lbas[510];
         uint64_t Indirect_ptr_lbas;
     };
 
@@ -110,13 +112,14 @@ namespace ROCKSDB_NAMESPACE
 
     public:
         MYFS_File(std::string filePath, MYFS *FSObj);
-        ~MYFS_File();
+        ~MYFS_File(){};
         int Read(uint64_t size, char *data);
         int PRead(uint64_t offset, uint64_t size, char *data);
         int Seek(uint64_t offset);
         int Truncate(uint64_t size);
         int Append(uint64_t size, char *data);
         int PAppend(uint64_t offset, uint64_t size, char *data);
+        uint64_t GetFileSize();
         int Close();
     };
 
@@ -130,58 +133,64 @@ namespace ROCKSDB_NAMESPACE
 
     public:
         MYFS_SequentialFile(std::string filePath, MYFS *FSObj);
-        virtual ~MYFS_SequentialFile();
+        virtual ~MYFS_SequentialFile(){delete this->fp;}
         virtual IOStatus Read(size_t n, const IOOptions &opts, Slice *result,
-                              char *scratch, IODebugContext *dbg) override{};
-        virtual IOStatus PositionedRead(uint64_t offset, size_t n,
-                                        const IOOptions &opts, Slice *result,
-                                        char *scratch, IODebugContext *dbg) override;
+                              char *scratch, IODebugContext *dbg)override;
+       
         virtual IOStatus Skip(uint64_t n) override;
-        virtual IOStatus InvalidateCache(size_t offset, size_t length) override
-        {
-            return IOStatus::OK();
-        };
-        virtual bool use_direct_io() const override { return false; }
-        virtual size_t GetRequiredBufferAlignment() const override { return 4096; }
+        // virtual IOStatus PositionedRead(uint64_t offset, size_t n,
+        //                                 const IOOptions &opts, Slice *result,
+        //                                 char *scratch, IODebugContext *dbg) override;
+        // virtual IOStatus InvalidateCache(size_t offset, size_t length) override
+        // {
+        //     return IOStatus::OK();
+        // };
+        // virtual bool use_direct_io() const override { return true; }
+        // virtual size_t GetRequiredBufferAlignment() const override { return 4096; }
     };
 
     class MYFS_RandomAccessFile : public FSRandomAccessFile
     {
     private:
-        MYFS_File fp;
+        MYFS_File *fp;
 
     public:
-        MYFS_RandomAccessFile(const std::string &fname, MYFS *FSObj);
-        virtual ~MYFS_RandomAccessFile();
+        MYFS_RandomAccessFile(std::string fname, MYFS *FSObj);
+        virtual ~MYFS_RandomAccessFile(){delete this->fp;}
         virtual IOStatus Read(uint64_t offset, size_t n, const IOOptions &opts,
-                              Slice *result, char *scratch,
-                              IODebugContext *dbg) const override;
-
+                              Slice *result, char *scratch, IODebugContext *dbg) const override;
+        /*
         virtual IOStatus MultiRead(FSReadRequest *reqs, size_t num_reqs,
                                    const IOOptions &options,
-                                   IODebugContext *dbg) override;
+                                   IODebugContext *dbg) {std::cout<<"MULTIREAD"<<std::endl;return IOStatus::OK();}
 
         virtual IOStatus Prefetch(uint64_t offset, size_t n, const IOOptions &opts,
-                                  IODebugContext *dbg) override;
+                                  IODebugContext *dbg) {std::cout<<"PRE-FETCH"<<std::endl;return IOStatus::OK();}
 
         virtual IOStatus InvalidateCache(size_t offset, size_t length) override { return IOStatus::OK(); };
-        virtual bool use_direct_io() const override { return false; }
+        virtual bool use_direct_io() const override { return true; }
         virtual size_t GetRequiredBufferAlignment() const override { return 4096; }
+        */
     };
 
     class MYFS_WritableFile : public FSWritableFile
     {
     private:
-        MYFS_File fp;
+        MYFS_File *fp;
 
     public:
+        MYFS_WritableFile(std::string fname, MYFS *FSObj);
+        virtual ~MYFS_WritableFile(){delete this->fp;}
         virtual IOStatus Truncate(uint64_t size, const IOOptions &opts,
                                   IODebugContext *dbg) override;
-        virtual IOStatus Close(const IOOptions &opts, IODebugContext *dbg) override;
+        virtual IOStatus Close(const IOOptions &opts, IODebugContext *dbg) {return IOStatus::OK();};
         virtual IOStatus Append(const Slice &data, const IOOptions &opts,
                                 IODebugContext *dbg) override;
+        virtual IOStatus Flush(const IOOptions &opts, IODebugContext *dbg) override { return IOStatus::OK(); }
+        virtual IOStatus Sync(const IOOptions &opts, IODebugContext *dbg) override { return IOStatus::OK(); }
+        /*
         virtual IOStatus Append(const Slice &data, const IOOptions &opts,
-                                const DataVerificationInfo & /* verification_info */,
+                                const DataVerificationInfo & /* verification_info ,
                                 IODebugContext *dbg) override
         {
             return Append(data, opts, dbg);
@@ -190,21 +199,21 @@ namespace ROCKSDB_NAMESPACE
                                           const IOOptions &opts,
                                           IODebugContext *dbg) override;
         virtual IOStatus PositionedAppend(const Slice &data, uint64_t offset,
-                                          const IOOptions &opts, const DataVerificationInfo & /* verification_info */,
+                                          const IOOptions &opts, const DataVerificationInfo & /* verification_info,
                                           IODebugContext *dbg) override
         {
             return PositionedAppend(data, offset, opts, dbg);
         }
-        virtual IOStatus Flush(const IOOptions &opts, IODebugContext *dbg) override { return IOStatus::OK(); }
-        virtual IOStatus Sync(const IOOptions &opts, IODebugContext *dbg) override { return IOStatus::OK(); }
+        
         virtual IOStatus Fsync(const IOOptions &opts, IODebugContext *dbg) override { return IOStatus::OK(); }
         virtual bool IsSyncThreadSafe() const { return false; }
-        virtual bool use_direct_io() const override { return false; }
-        virtual void SetWriteLifeTimeHint(Env::WriteLifeTimeHint hint) override;
+        virtual bool use_direct_io() const override { return true; }
+        virtual void SetWriteLifeTimeHint(Env::WriteLifeTimeHint hint) override {}
         virtual uint64_t GetFileSize(const IOOptions &opts,
-                                     IODebugContext *dbg) override;
+                                     IODebugContext *dbg) override {std::cout<<"Calling this module"<<std::endl;;return this->fp->GetFileSize();}
         virtual IOStatus InvalidateCache(size_t offset, size_t length) override { return IOStatus::OK(); }
         virtual size_t GetRequiredBufferAlignment() const override { return 4096; }
+        */
     };
 
     class MYFS_Directory : public FSDirectory
