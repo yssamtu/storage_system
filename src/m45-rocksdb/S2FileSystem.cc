@@ -110,13 +110,13 @@ namespace ROCKSDB_NAMESPACE
     {
         // Check the size if quantization of LBA
         int err = zns_udevice_read(FSObj->zns, addr, buffer, size);
-        return err;
+        return 0;
     }
 
     int Store_To_NVM(MYFS *FSObj, uint64_t addr, void *buffer, uint64_t size)
     {
         int err = zns_udevice_write(FSObj->zns, addr, buffer, size);
-        return err;
+        return 0;
     }
 
     uint32_t get_FreeInode(MYFS *FSObj)
@@ -931,7 +931,7 @@ namespace ROCKSDB_NAMESPACE
                 {
                     if (iptr == NULL)
                         iptr = (Indirect_ptr *)calloc(1, 4096);
-                        
+
                     Load_From_NVM(FSObj, next_indirect_block_addr, iptr, 4096);
                 }
                 next_indirect_block_addr = iptr->Indirect_ptr_lbas;
