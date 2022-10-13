@@ -112,7 +112,7 @@ namespace ROCKSDB_NAMESPACE
 
     public:
         MYFS_File(std::string filePath, MYFS *FSObj);
-        ~MYFS_File(){};
+        virtual ~MYFS_File() = default;
         int Read(uint64_t size, char *data);
         int PRead(uint64_t offset, uint64_t size, char *data);
         int Seek(uint64_t offset);
@@ -133,7 +133,7 @@ namespace ROCKSDB_NAMESPACE
 
     public:
         MYFS_SequentialFile(std::string filePath, MYFS *FSObj);
-        virtual ~MYFS_SequentialFile(){std::cout<<"Close the file : "<<std::endl;delete this->fp;}
+        virtual ~MYFS_SequentialFile(){delete this->fp;}
         virtual IOStatus Read(size_t n, const IOOptions &opts, Slice *result,
                               char *scratch, IODebugContext *dbg)override;
        
@@ -156,7 +156,7 @@ namespace ROCKSDB_NAMESPACE
 
     public:
         MYFS_RandomAccessFile(std::string fname, MYFS *FSObj);
-        virtual ~MYFS_RandomAccessFile(){std::cout<<"Random Close the file : "<<std::endl;delete this->fp;}
+        virtual ~MYFS_RandomAccessFile(){delete this->fp;}
         virtual IOStatus Read(uint64_t offset, size_t n, const IOOptions &opts,
                               Slice *result, char *scratch, IODebugContext *dbg) const override;
         /*
@@ -222,9 +222,8 @@ namespace ROCKSDB_NAMESPACE
                 MYFS *fp;
             public:
             MYFS_Directory(MYFS *FSObj){}
-            ~MYFS_Directory(){}
+            virtual ~MYFS_Directory(){}
             virtual IOStatus Fsync(const IOOptions& opts, IODebugContext* dbg) override {
-                std::cout<<"Sample"<<std::endl;
                 return IOStatus::OK();
             }
     };
