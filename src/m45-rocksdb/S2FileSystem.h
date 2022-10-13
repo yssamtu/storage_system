@@ -52,7 +52,7 @@ namespace ROCKSDB_NAMESPACE
 
     struct mapEntries
     {
-        std::string id;
+        char id[1000];
         Inode *ptr;
         mapEntries *chain;
     };

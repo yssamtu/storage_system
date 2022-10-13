@@ -44,7 +44,7 @@ namespace ROCKSDB_NAMESPACE
         int index = LookupMap_HashFunction(id);
 
         mapEntries *map = (mapEntries *)calloc(1, sizeof(mapEntries));
-        map->id = id;
+        strcpy(map->id,id.c_str());
         map->ptr = ptr;
         map->chain = NULL;
 
@@ -70,7 +70,7 @@ namespace ROCKSDB_NAMESPACE
 
         while (head != NULL)
         {
-            if (head->id == id)
+            if (!strcmp(head->id,id.c_str()))
             {
                 if (tmp == NULL)
                     FSObj->LookupCache[index] = head->chain;
@@ -94,7 +94,7 @@ namespace ROCKSDB_NAMESPACE
 
         while (head != NULL)
         {
-            if (head->id == id)
+            if (!strcmp(head->id,id.c_str()))
                 break;
             head = head->chain;
         }
@@ -685,6 +685,7 @@ namespace ROCKSDB_NAMESPACE
     IOStatus S2FileSystem::DeleteFile(const std::string &fname, const IOOptions &options, IODebugContext *dbg)
     {
         // MYFS_DeletePath(this->FileSystemObj, fname);
+        std::cout<<"Delete file called"<<std::endl;
         return IOStatus::OK();
     }
 
