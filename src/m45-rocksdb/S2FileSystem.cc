@@ -862,7 +862,12 @@ namespace ROCKSDB_NAMESPACE
         {
             curr -= 480;
             int nth_indirect = curr / 510;
+            //What if ptr->Indirect_ptr_lba 
             iptr = (Indirect_ptr *)calloc(1, 4096);
+            if(ptr->Indirect_ptr_lbas == 0) {
+                ptr->Indirect_ptr_lbas = get_FreeDataBlock(FSObj);
+            }
+
             Load_From_NVM(FSObj, ptr->Indirect_ptr_lbas, iptr, 4096);
             for (int i = 0; i < nth_indirect; i++)
                 Load_From_NVM(FSObj, iptr->Indirect_ptr_lbas, iptr, 4096);
@@ -881,7 +886,7 @@ namespace ROCKSDB_NAMESPACE
             if (!addr)
             {
                 addr = get_FreeDataBlock(FSObj);
-                *data_block_lba_ptr = addr;
+                *(data_block_lba_ptr+curr) = addr;
             }
             addresses->push_back(addr);
             curr++;
