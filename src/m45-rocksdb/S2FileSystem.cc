@@ -1083,6 +1083,8 @@ namespace ROCKSDB_NAMESPACE
     MYFS_WritableFile::MYFS_WritableFile(std::string fname, MYFS *FSObj)
     {
         this->fp = new MYFS_File(fname, FSObj);
+        this->cache = false;
+        this->cacheSize = 0;
     }
 
     IOStatus MYFS_WritableFile::Truncate(uint64_t size, const IOOptions &opts, IODebugContext *dbg)
@@ -1093,11 +1095,43 @@ namespace ROCKSDB_NAMESPACE
         return IOStatus::OK();
     }
 
+    IOStatus MYFS_WritableFile::ClearCache() {
+        if(!this->cache)
+            return IOStatus::OK();
+        this->cache = false;
+        int err = this->fp->Append(this->cacheSize, this->cacheData);
+        if (err)
+            return IOStatus::IOError(__FUNCTION__);
+        free(this->cacheData);
+        this->cacheSize = 0;
+        return IOStatus::OK();
+    }
+
     IOStatus MYFS_WritableFile::Append(const Slice &data, const IOOptions &opts, IODebugContext *dbg)
     {
         
         char *block = (char *)data.data();
         uint64_t size = data.size();
+        if(this->cache) {
+            //Append to cache
+            char *tmp = (char *)calloc(1, this->cacheSize+size);
+            memcpy(tmp, this->cacheData, this->cacheSize);
+            memcpy(tmp+this->cacheSize, block, size);
+            free(this->cacheData);
+            this->cacheData = tmp;
+            this->cacheSize += size;
+            //If size > 4096 clear cache
+            if(this->cacheSize >= 4096)
+                this->ClearCache();
+            return IOStatus::OK();
+        } else if(size < 4096) {
+            //Append to cache
+            this->cache = true;
+            this->cacheData = (char *)calloc(1, size);
+            memcpy(this->cacheData, block, size);
+            this->cacheSize = size;
+            return IOStatus::OK();
+        }
         int err = this->fp->Append(size, block);
         if (err)
             return IOStatus::IOError(__FUNCTION__);
