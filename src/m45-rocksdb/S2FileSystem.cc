@@ -1121,10 +1121,10 @@ namespace ROCKSDB_NAMESPACE
             this->cacheData = tmp;
             this->cacheSize += size;
             //If size > 4096 clear cache
-            if(this->cacheSize >= 4096)
+            if(this->cacheSize >= 4096*200)
                 this->ClearCache();
             return IOStatus::OK();
-        } else if(size < 4096) {
+        } else if(size < 4096*200) {
             //Append to cache
             this->cache = true;
             this->cacheData = (char *)calloc(1, size);
