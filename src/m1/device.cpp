@@ -21,7 +21,6 @@ SOFTWARE.
  */
 
 #include <cassert>
-#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <iomanip>
@@ -336,11 +335,10 @@ uint32_t get_mdts_size(const int &fd)
     //Identify MDTS
     nvme_identify_ctrl(fd, &ctrl);
     //Identify MPSMIN
-    void *regs = mmap(nullptr, getpagesize(), PROT_READ, MAP_SHARED,
-                               fd, 0L);
+    void *regs = mmap(nullptr, getpagesize(), PROT_READ, MAP_SHARED, fd, 0L);
     uint32_t mpsmin = NVME_CAP_MPSMIN(nvme_mmio_read64(regs)); 
     munmap(regs, getpagesize());
-    uint32_t size = pow(2.0, mpsmin) * pow(2.0, ctrl.mdts);
+    uint32_t size = 1U << (mpsmin + ctrl.mdts);
     return size;
 }
 
