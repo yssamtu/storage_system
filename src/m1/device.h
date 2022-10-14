@@ -36,28 +36,40 @@ struct ss_nvme_ns {
 };
 
 struct zone_to_test {
-    struct nvme_zns_desc desc;
-    uint64_t lba_size_in_use;
+    nvme_zns_desc desc;
+    uint32_t lba_size_in_use;
 };
 
 // these three function examples are given to you
 int count_and_show_all_nvme_devices();
-int scan_and_identify_zns_devices(struct ss_nvme_ns *list);
-int show_zns_zone_status(int fd, int nsid, struct zone_to_test *ztest);
-
+int scan_and_identify_zns_devices(ss_nvme_ns *list);
+int show_zns_zone_status(const int &fd, const unsigned &nsid,
+                         zone_to_test &ztest);
 // these follow nvme specification I added ss_ prefix to avoid namespace collision with other lbnvme functions
-int ss_nvme_device_io_with_mdts(int fd, uint32_t nsid, uint64_t slba, uint16_t numbers, void *buffer, uint64_t buf_size,
-                                uint64_t lba_size, uint64_t mdts_size, bool read);
-int ss_nvme_device_read(int fd, uint32_t nsid, uint64_t slba, uint16_t numbers, void *buffer, uint64_t buf_size);
-int ss_nvme_device_write(int fd, uint32_t nsid, uint64_t slba, uint16_t numbers, void *buffer, uint64_t buf_size);
-
+int ss_nvme_device_io_with_mdts(const int &fd, const unsigned &nsid,
+                                unsigned long long slba,
+                                void *buffer, unsigned buf_size,
+                                const uint32_t &lba_size,
+                                const uint32_t &mdts_size, const bool &read);
+int ss_nvme_device_read(const int &fd, const unsigned &nsid,
+                        const unsigned long long &slba,
+                        const unsigned short &numbers,
+                        void *buffer, const unsigned &buf_size);
+int ss_nvme_device_write(const int &fd, const unsigned &nsid,
+                         const unsigned long long &slba,
+                         const unsigned short &numbers,
+                         void *buffer, const unsigned &buf_size);
 // these are ZNS specific commands
-int ss_zns_device_zone_reset(int fd, uint32_t nsid, uint64_t slba);
-int ss_zns_device_zone_append(int fd, uint32_t nsid, uint64_t zslba, int numbers, void *buffer, uint32_t buf_size,
-                              uint64_t *written_slba);
+int ss_zns_device_zone_reset(const int &fd, const unsigned &nsid,
+                             const unsigned long long &slba);
+int ss_zns_device_zone_append(const int &fd, const unsigned &nsid,
+                              const unsigned long long &zslba,
+                              const unsigned short &numbers,
+                              void *buffer, const unsigned &buf_size,
+                              unsigned long long *written_slba);
+void update_lba(unsigned long long &write_lba, const int &count);
+uint32_t get_mdts_size(const int &fd);
 
-void update_lba(uint64_t &write_lba, const uint32_t lba_size, const int count);
-uint64_t get_mdts_size(int fd);
 }
 
 #endif //STOSYS_PROJECT_DEVICE_H

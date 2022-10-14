@@ -48,7 +48,7 @@ static std::string genrate_random_string(const int len) {
 
 static int fill_up_map(std::map<std::string,std::string> &testmap, int entries, int ksize, int vsize){
     int count = 0;
-    while(testmap.size() != entries) {
+    while(testmap.size() != static_cast<size_t>(entries)) {
         // the problem is that with small key sizes, we might run out of unique keys to insert, hence
         // we append the count at the end to make them unique and then dynamically adjust the value size to
         // control the total bytes of data inserted in the database
@@ -83,10 +83,10 @@ static void destroy_myrocks_context(struct MyRocksContext *&ctx){
     delete[] ctx;
 }
 
-static void print_myrocks_context(struct MyRocksContext *ctx){
-    assert(ctx != nullptr);
-    std::cout<<" uri: " << ctx->uri << " fs_attached: " << ctx->db->GetFileSystem()->Name() << " \n";
-}
+// static void print_myrocks_context(struct MyRocksContext *ctx){
+//     assert(ctx != nullptr);
+//     std::cout<<" uri: " << ctx->uri << " fs_attached: " << ctx->db->GetFileSystem()->Name() << " \n";
+// }
 
 // posix takes:  posix://.*"
 // s2fs-rocksdb takes takes: s2fs:.*://.*

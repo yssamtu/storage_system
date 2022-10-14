@@ -20,21 +20,21 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  */
 
+#include <cassert>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
-#include <cerrno>
-
-#include <libnvme.h>
 #include <cstring>
-#include <cassert>
-
+#include <memory>
+#include <libnvme.h>
 #include "device.h"
 #include "../common/nvmeprint.h"
 #include "../common/utils.h"
 
 extern "C" {
 
-static int test1_lba_io_test(int zfd, uint32_t nsid, struct zone_to_test *ztest){
+static int test1_lba_io_test(const int &zfd, const unsigned &nsid, zone_to_test *ztest)
+{
     struct nvme_id_ns *s_nsid = nullptr;
     int ret;
     uint64_t test_lba_address = le64_to_cpu(ztest->desc.zslba);
@@ -81,11 +81,11 @@ static int test1_lba_io_test(int zfd, uint32_t nsid, struct zone_to_test *ztest)
     // step 5: read all 5 and match the pattern
     do {
         // step 1: reset the whole zone
-        uint64_t write_lba = le64_to_cpu(ztest->desc.zslba), zone_slba = le64_to_cpu(ztest->desc.zslba);
-        uint64_t returned_slba = -1;
+        unsigned long long write_lba = le64_to_cpu(ztest->desc.zslba), zone_slba = le64_to_cpu(ztest->desc.zslba);
+        unsigned long long returned_slba = -1;
         ret = ss_zns_device_zone_reset(zfd, nsid, zone_slba);
         assert(ret == 0);
-        printf("zone at 0x%lx is reset successfully \n", zone_slba);
+        printf("zone at 0x%llx is reset successfully \n", zone_slba);
         // step 2: write 2x blocks, hence 2x the buffer size
         char *w_pattern2 = (char *) calloc (2 , ztest->lba_size_in_use);
         // I am writing these patterns in two stages so that I can test them independently.
@@ -95,17 +95,17 @@ static int test1_lba_io_test(int zfd, uint32_t nsid, struct zone_to_test *ztest)
         ret = ss_nvme_device_write(zfd, nsid, le64_to_cpu(ztest->desc.zslba), 2, w_pattern2, 2 * ztest->lba_size_in_use);
         assert(ret == 0);
         printf("zone is written 2x successfully \n");
-        update_lba(write_lba, ztest->lba_size_in_use, 2);
+        update_lba(write_lba, 2);
         // step 3: append 2x LBA blocks
         ret = ss_zns_device_zone_append(zfd, nsid, zone_slba, 2, w_pattern2,
                                         2 * ztest->lba_size_in_use, &returned_slba);
         assert(ret == 0);
-        printf("zone is APPENDED 2x successfully, returned pointer is at %lx (to match %lx) \n", returned_slba, write_lba);
+        printf("zone is APPENDED 2x successfully, returned pointer is at %llx (to match %llx) \n", returned_slba, write_lba);
         // match that the returned pointer - which should be the original write ptr location.
         // returned pointer is where the data is appended (not where the write pointer _is_)
-	assert(returned_slba == write_lba);
+	    assert(returned_slba == write_lba);
         // move the returned pointer to the +2 LBAs - we can now use the returned pointer
-        update_lba(returned_slba, ztest->lba_size_in_use, 2);
+        update_lba(returned_slba, 2);
         // step 4: write the 5th 1x LBA using the returned LBA from the append
         ret = ss_nvme_device_write(zfd, nsid, returned_slba, 1, w_pattern, ztest->lba_size_in_use);
         assert(ret == 0);
@@ -133,7 +133,8 @@ static int test1_lba_io_test(int zfd, uint32_t nsid, struct zone_to_test *ztest)
     return ret;
 }
 
-static int test2_zone0_full_io_test(int zfd, uint32_t nsid, struct zone_to_test *ztest){
+static int test2_zone0_full_io_test(int zfd, uint32_t nsid, struct zone_to_test *ztest)
+{
     uint64_t zone_size_in_bytes = ztest->lba_size_in_use * ztest->desc.zcap;
     uint64_t zslba = le64_to_cpu(ztest->desc.zslba);
     uint64_t MDTS = get_mdts_size(zfd);
@@ -150,7 +151,7 @@ static int test2_zone0_full_io_test(int zfd, uint32_t nsid, struct zone_to_test 
         printf("Error: zone rest on 0x%lx failed, ret %d \n", zslba, ret);
         goto done;
     }
-    ret = ss_nvme_device_io_with_mdts(zfd, nsid, zslba, ztest->desc.zcap, data, zone_size_in_bytes,
+    ret = ss_nvme_device_io_with_mdts(zfd, nsid, zslba, data, zone_size_in_bytes,
                                       ztest->lba_size_in_use,
                                       MDTS,
                                       false);
@@ -160,7 +161,7 @@ static int test2_zone0_full_io_test(int zfd, uint32_t nsid, struct zone_to_test 
     }
     // now read the zone
     bzero(data, zone_size_in_bytes);
-    ret = ss_nvme_device_io_with_mdts(zfd, nsid, zslba, ztest->desc.zcap, data, zone_size_in_bytes,
+    ret = ss_nvme_device_io_with_mdts(zfd, nsid, zslba, data, zone_size_in_bytes,
                                       ztest->lba_size_in_use,
                                       MDTS,
                                       true);
@@ -177,86 +178,80 @@ static int test2_zone0_full_io_test(int zfd, uint32_t nsid, struct zone_to_test 
     return ret;
 }
 
-int main() {
-    int ret, num_devices, fd, t1, t2;
-    uint32_t nsid;
-    struct ss_nvme_ns *my_devices, *zns_device;
-    struct nvme_id_ns ns{};
-    struct zone_to_test ztest{};
-    printf("============================================================== \n");
-    printf("Welcome to M1. This is lot of ZNS/NVMe exploration \n");
-    printf("============================================================== \n");
+int main()
+{
+    printf("==============================================================\n");
+    printf("Welcome to M1. This is lot of ZNS/NVMe exploration\n");
+    printf("==============================================================\n");
     // scan all NVMe devices in the system - just like nvme list command
-    ret = count_and_show_all_nvme_devices();
-    if(ret < 0){
-        printf("the host device scans failed, %d \n", ret);
+    int ret = count_and_show_all_nvme_devices();
+    if (ret < 0) {
+        printf("the host device scans failed, %d\n", ret);
         return ret;
     }
     // now we are going to allocate scan the returned number of devices to identify a ZNS device
-    num_devices = ret;
-    printf("total number of devices in the system is %d \n", num_devices);
-    if(num_devices == 0){
-        printf("Error: failed to open any device, zero devices in the system? \n");
+    int num_devices = ret;
+    printf("total number of devices in the system is %d\n", num_devices);
+    if (!num_devices) {
+        printf("Error: failed to open any device, zero devices in the system?\n");
         return -ENODEV;
     }
-    my_devices = (struct ss_nvme_ns *) calloc (num_devices, sizeof(*my_devices));
-    if(!my_devices){
-        printf("failed calloc, -ENOMEM \n");
-        return -12;
-    }
-    ret = scan_and_identify_zns_devices(my_devices);
-    if(ret < 0){
+    std::unique_ptr<ss_nvme_ns[]> my_devices(new ss_nvme_ns[num_devices]());
+    ret = scan_and_identify_zns_devices(my_devices.get());
+    if (ret < 0) {
         printf("scanning of the devices failed %d\n", ret);
         return ret;
     }
-    for(int i = 0; i < num_devices; i++){
-        printf("namespace: %s and zns %s \n", my_devices[i].ctrl_name, (my_devices[i].supports_zns ? "YES" : "NO"));
-        if(my_devices[i].supports_zns) {
-            // with this we will just pick the last ZNS device to work with
+    ss_nvme_ns *zns_device = nullptr;
+    for (int i = 0; i < num_devices; ++i) {
+        printf("namespace: %s and zns %s\n", my_devices[i].ctrl_name, (my_devices[i].supports_zns ? "YES" : "NO"));
+        // with this we will just pick the last ZNS device to work with
+        if (my_devices[i].supports_zns)
             zns_device = &my_devices[i];
-        }
     }
-    printf("Opening the device at %s \n", zns_device->ctrl_name);
-    fd = nvme_open(zns_device->ctrl_name);
-    if(fd < 0){
-        printf("device %s opening failed %d errno %d \n", zns_device->ctrl_name, fd, errno);
+    printf("Opening the device at %s\n", zns_device->ctrl_name);
+    int fd = nvme_open(zns_device->ctrl_name);
+    if (fd < 0) {
+        printf("device %s opening failed %d errno %d\n", zns_device->ctrl_name, fd, errno);
         return -fd;
     }
-    printf("device %s opened successfully %d \n", zns_device->ctrl_name, fd);
+    printf("device %s opened successfully %d\n", zns_device->ctrl_name, fd);
     // now try to retrieve the NVMe namespace details - step 1 get the id
+    unsigned nsid = 0U;
     ret = nvme_get_nsid(fd, &nsid);
-    if(ret != 0){
-        printf("ERROR: failed to retrieve the nsid %d \n", ret);
+    if (ret) {
+        printf("ERROR: failed to retrieve the nsid %d\n", ret);
         return ret;
     }
     // with the id now we can query the identify namespace - see figure 249, section 5.15.2 in the NVMe specification
+    nvme_id_ns ns;
     ret = nvme_identify_ns(fd, nsid, &ns);
-    if(ret){
-        printf("ERROR: failed to retrieve the nsid %d \n", ret);
+    if (ret) {
+        printf("ERROR: failed to retrieve the nsid %d\n", ret);
         return ret;
     }
     ss_nvme_show_id_ns(&ns);
     printf("number of LBA formats? %d (a zero based value) \n", ns.nlbaf);
     // extract the in-use LBA size, it could be the case that the device supports multiple LBA size
+    zone_to_test ztest;
     ztest.lba_size_in_use = 1 << ns.lbaf[(ns.flbas & 0xf)].ds;
-    printf("the LBA size is %lu bytes \n", ztest.lba_size_in_use);
+    printf("the LBA size is %u bytes \n", ztest.lba_size_in_use);
     // this function shows the zone status and then return the first empty zone to do experiments on in ztest
-    ret = show_zns_zone_status(fd, nsid, &ztest);
-    if ( ret != 0) {
+    ret = show_zns_zone_status(fd, nsid, ztest);
+    if (ret) {
         printf("failed to get a workable zone, ret %d \n", ret);
         return ret;
     }
-    t1 = test1_lba_io_test(fd, nsid, &ztest);
-    t2 = test2_zone0_full_io_test(fd, nsid, &ztest);
+    int t1 = test1_lba_io_test(fd, nsid, &ztest);
+    int t2 = test2_zone0_full_io_test(fd, nsid, &ztest);
     printf("====================================================================\n");
     printf("Milestone 1 results \n");
     printf("Test 1 (read, write, append, reset) : %s \n", (t1 == 0 ? " Passed" : " Failed"));
     printf("Test 2 (Large zone read, write)     : %s \n", (t2 == 0 ? " Passed" : " Failed"));
     printf("====================================================================\n");
-    for(int i = 0; i < num_devices; i++) {
+    for(int i = 0; i < num_devices; ++i)
         free(my_devices[i].ctrl_name);
-    }
-    free(my_devices);
     return 0;
 }
+
 }
