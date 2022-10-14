@@ -24,8 +24,6 @@ SOFTWARE.
 #ifndef STOSYS_PROJECT_DEVICE_H
 #define STOSYS_PROJECT_DEVICE_H
 
-#include <libnvme.h>
-
 extern "C" {
 // we will use an ss_ extension to differentiate our struct definitions from the standard library
 // In C++ we should use namespaces, but I am lazy
@@ -48,7 +46,7 @@ int show_zns_zone_status(const int &fd, const unsigned &nsid,
 // these follow nvme specification I added ss_ prefix to avoid namespace collision with other lbnvme functions
 int ss_nvme_device_io_with_mdts(const int &fd, const unsigned &nsid,
                                 unsigned long long slba,
-                                void *buffer, unsigned buf_size,
+                                void *buffer, uint64_t buf_size,
                                 const uint32_t &lba_size,
                                 const uint32_t &mdts_size, const bool &read);
 int ss_nvme_device_read(const int &fd, const unsigned &nsid,

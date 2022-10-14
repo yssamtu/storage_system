@@ -311,25 +311,25 @@ const char *ss_nvme_status_to_string(__u16 status) {
     }
 }
 
-static const char *nvme_feature_lba_type_to_string(__u8 type) {
-    switch (type) {
-        case 0:
-            return "Reserved";
-        case 1:
-            return "Filesystem";
-        case 2:
-            return "RAID";
-        case 3:
-            return "Cache";
-        case 4:
-            return "Page / Swap file";
-        default:
-            if (type >= 0x05 && type <= 0x7f)
-                return "Reserved";
-            else
-                return "Vendor Specific";
-    }
-}
+// static const char *nvme_feature_lba_type_to_string(__u8 type) {
+//     switch (type) {
+//         case 0:
+//             return "Reserved";
+//         case 1:
+//             return "Filesystem";
+//         case 2:
+//             return "RAID";
+//         case 3:
+//             return "Cache";
+//         case 4:
+//             return "Page / Swap file";
+//         default:
+//             if (type >= 0x05 && type <= 0x7f)
+//                 return "Reserved";
+//             else
+//                 return "Vendor Specific";
+//     }
+// }
 
 static void nvme_show_id_ns_nsfeat(__u8 nsfeat) {
     __u8 rsvd = (nsfeat & 0xE0) >> 5;

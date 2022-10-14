@@ -22,6 +22,7 @@ SOFTWARE.
 
 #include <cassert>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
@@ -217,14 +218,10 @@ int show_zns_zone_status(const int &fd, const unsigned &nsid, zone_to_test &ztes
     nvme_zns_desc *_ztest = nullptr;
     for (uint64_t i = 0; i < num_zones; ++i) {
         // see figure 39 for description of these fields
-        std::cout << "\t SLBA: 0x%-8" << le64_to_cpu(desc->zslba)
-                  << " WP: 0x%-8" << le64_to_cpu(desc->wp)
-                  << " Cap: 0x%-8" << le64_to_cpu(desc->zcap)
-                  << " State: " << std::setw(12) << std::setfill(' ')
-                  << ss_zone_state_to_string(desc->zs >> 4)
-                  << " Type: " << std::setw(14) << std::setfill(' ')
-                  << ss_zone_type_to_string(desc->zt)
-                  << " Attrs: 0x" << desc->za << std::endl;
+        printf("\t SLBA: 0x%-8" PRIx64" WP: 0x%-8" PRIx64" Cap: 0x%-8" PRIx64" State: %-12s Type: %-14s Attrs: 0x%-x\n",
+               le64_to_cpu(desc->zslba), le64_to_cpu(desc->wp),
+               le64_to_cpu(desc->zcap), ss_zone_state_to_string(desc->zs >> 4),
+               ss_zone_type_to_string(desc->zt), desc->za);
         // pick the first zone which is empty to do I/O experiments
         if (!_ztest && desc->zs >> 4 == NVME_ZNS_ZS_EMPTY)
             _ztest = desc;
@@ -246,13 +243,13 @@ perhaps reset the zones with: sudo nvme zns reset-zone -a /dev/nvme0n1"
 
 int ss_nvme_device_io_with_mdts(const int &fd, const unsigned &nsid,
                                 unsigned long long slba,
-                                void *buffer, unsigned buf_size,
+                                void *buffer, uint64_t buf_size,
                                 const uint32_t &lba_size,
                                 const uint32_t &mdts_size, const bool &read)
 {
     //FIXME:
     while (buf_size) {
-        unsigned size = buf_size < mdts_size ? buf_size : mdts_size;
+        unsigned size = buf_size < (mdts_size - 2U) * lba_size ? buf_size : (mdts_size - 2U) * lba_size;
         unsigned short no_blocks = size / lba_size;
         if (read)
             ss_nvme_device_read(fd, nsid, slba, no_blocks, buffer, size);
@@ -275,7 +272,6 @@ int ss_nvme_device_read(const int &fd, const unsigned &nsid,
     //FIXME:
     nvme_read(fd, nsid, slba, numbers - 1, 0U, 0U, 0U, 0U, 0U,
               buf_size, buffer, 0U, nullptr);
-    ss_nvme_show_status(errno);
     return errno;
 }
 
@@ -287,7 +283,6 @@ int ss_nvme_device_write(const int &fd, const unsigned &nsid,
     //FIXME:
     nvme_write(fd, nsid, slba, numbers - 1, 0U, 0U, 0U, 0U, 0U, 0U,
                buf_size, buffer, 0U, nullptr);
-    ss_nvme_show_status(errno);
     return errno;
 }
 
@@ -296,7 +291,6 @@ int ss_zns_device_zone_reset(const int &fd, const unsigned &nsid,
 {
     //FIXME:
     nvme_zns_mgmt_send(fd, nsid, slba, true, NVME_ZNS_ZSA_RESET, 0U, nullptr);
-    ss_nvme_show_status(errno);
     return errno;
 }
 
@@ -310,13 +304,11 @@ int ss_zns_device_zone_append(const int &fd, const unsigned &nsid,
     //FIXME:
     nvme_zns_append(fd, nsid, zslba, numbers - 1, 0U, 0U, 0U, 0U,
                     buf_size, buffer, 0U, nullptr, written_slba);
-    ss_nvme_show_status(errno);
     return errno;
 }
 
 void update_lba(unsigned long long &write_lba, const int &count)
 {
-    //assert(false);
     write_lba += count;
 }
 
