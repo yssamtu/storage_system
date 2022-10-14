@@ -25,7 +25,8 @@ SOFTWARE.
 #define STOSYS_PROJECT_DEVICE_H
 
 extern "C" {
-// we will use an ss_ extension to differentiate our struct definitions from the standard library
+// we will use an ss_ extension
+// to differentiate our struct definitions from the standard library
 // In C++ we should use namespaces, but I am lazy
 struct ss_nvme_ns {
     char *ctrl_name;
@@ -43,7 +44,8 @@ int count_and_show_all_nvme_devices();
 int scan_and_identify_zns_devices(ss_nvme_ns *list);
 int show_zns_zone_status(const int &fd, const unsigned &nsid,
                          zone_to_test &ztest);
-// these follow nvme specification I added ss_ prefix to avoid namespace collision with other lbnvme functions
+// these follow nvme specification I added ss_ prefix
+// to avoid namespace collision with other lbnvme functions
 int ss_nvme_device_io_with_mdts(const int &fd, const unsigned &nsid,
                                 unsigned long long slba,
                                 void *buffer, uint64_t buf_size,

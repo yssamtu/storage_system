@@ -33,7 +33,8 @@ SOFTWARE.
 #include "device.h"
 #include "../common/nvmeprint.h"
 
-// Examples lifted from, https://github.com/linux-nvme/libnvme/blob/667334ff8c53dbbefa51948bbe2e086624bf4d0d/test/cpp.cc
+// Examples lifted from,
+// https://github.com/linux-nvme/libnvme/blob/667334ff8c53dbbefa51948bbe2e086624bf4d0d/test/cpp.cc
 int count_and_show_all_nvme_devices()
 {
     nvme_host_t h;
@@ -128,8 +129,8 @@ int scan_and_identify_zns_devices(ss_nvme_ns *list)
                                   &list[ns_counter].nsid);
                     int ret = nvme_ns_identify(nspace, &ns);
                     if (ret) {
-                        std::cout << "ERROR : failed to identify the namespace with "
-                                  << ret << " and errno " << errno << std::endl;
+                        std::cout << "ERROR : failed to identify the namespace \
+with " << ret << " and errno " << errno << std::endl;
                         return ret;
                     }
                     ++ns_counter;
@@ -141,7 +142,8 @@ int scan_and_identify_zns_devices(ss_nvme_ns *list)
     return 0;
 }
 
-int show_zns_zone_status(const int &fd, const unsigned &nsid, zone_to_test &ztest)
+int show_zns_zone_status(const int &fd, const unsigned &nsid,
+                         zone_to_test &ztest)
 {
     // ZNS specific data structures as specified in the TP 4053
     // standard NVMe structures
@@ -173,17 +175,25 @@ int show_zns_zone_status(const int &fd, const unsigned &nsid, zone_to_test &ztes
         return ret;
     }
     ss_nvme_show_zns_id_ctrl(&s_zns_ctrlid);
-    // now we send the management related commands - see section 4.3 and 4.4 in TP 4053
-    // we are now trying to retrieve the number of zones with other information present in the zone report
-    // the following function takes arguments that are required to filled the command structure as shown
+    // now we send the management related commands -
+    // see section 4.3 and 4.4 in TP 4053
+    // we are now trying to retrieve the number of zones
+    // with other information present in the zone report
+    // the following function takes arguments
+    // that are required to filled the command structure as shown
     // in the figures 33-36
     //   * SLBA goes into CDW 10 and 11, as shown in Figure 34
-    //   * zras is Zone Receive Action Specific Features, see figure 36 for details
-    //   * NVME_ZNS_ZRA_REPORT_ZONES and NVME_ZNS_ZRAS_REPORT_ALL are shown in Figure 36 CDW 13
+    //   * zras is Zone Receive Action Specific Features,
+    // see figure 36 for details
+    //   * NVME_ZNS_ZRA_REPORT_ZONES and NVME_ZNS_ZRAS_REPORT_ALL
+    // are shown in Figure 36 CDW 13
 
-    // Pay attention what is being passed in the zns_report pointer and size, I am passing a structure
-    // _WITHOUT_ its entries[] field initialized because we do not know how many zones does this namespace
-    // hence we first get the number of zones, and then try again to get the full report
+    // Pay attention what is being passed in the zns_report pointer and size,
+    // I am passing a structure
+    // _WITHOUT_ its entries[] field initialized
+    // because we do not know how many zones does this namespace
+    // hence we first get the number of zones,
+    // and then try again to get the full report
     nvme_zone_report zns_report;
     ret = nvme_zns_mgmt_recv(fd, nsid, 0ULL, NVME_ZNS_ZRA_REPORT_ZONES,
                              NVME_ZNS_ZRAS_REPORT_ALL, false,
@@ -195,10 +205,13 @@ int show_zns_zone_status(const int &fd, const unsigned &nsid, zone_to_test &ztes
     // see figures 37-38-39 in section 4.4.1
     uint64_t num_zones = le64_to_cpu(zns_report.nr_zones);
     printf("nr_zones:%" PRIu64"\n", num_zones);
-    // lets get more information about the zones - the total metadata size would be
+    // lets get more information about the zones -
+    // the total metadata size would be
     // see the figure 37 in the ZNS description
-    // so we allocated an structure with a flat memory and point the zone_reports to it
-    // An alternate strategy would have been just allocate a 4kB page and get some numbers of zone reports whatever can
+    // so we allocated an structure with a flat memory
+    // and point the zone_reports to it
+    // An alternate strategy would have been just allocate a 4kB page
+    // and get some numbers of zone reports whatever can
     // fit in that in a loop.
     uint64_t total_size = sizeof(zns_report) +
                           num_zones * sizeof(nvme_zns_desc);
@@ -218,10 +231,12 @@ int show_zns_zone_status(const int &fd, const unsigned &nsid, zone_to_test &ztes
     nvme_zns_desc *_ztest = nullptr;
     for (uint64_t i = 0; i < num_zones; ++i) {
         // see figure 39 for description of these fields
-        printf("\t SLBA: 0x%-8" PRIx64" WP: 0x%-8" PRIx64" Cap: 0x%-8" PRIx64" State: %-12s Type: %-14s Attrs: 0x%-x\n",
-               le64_to_cpu(desc->zslba), le64_to_cpu(desc->wp),
-               le64_to_cpu(desc->zcap), ss_zone_state_to_string(desc->zs >> 4),
-               ss_zone_type_to_string(desc->zt), desc->za);
+        printf("\t SLBA: 0x%-8" PRIx64, le64_to_cpu(desc->zslba));
+        printf(" WP: 0x%-8" PRIx64, le64_to_cpu(desc->wp));
+        printf(" Cap: 0x%-8" PRIx64, le64_to_cpu(desc->zcap));
+        printf(" State: %-12s", ss_zone_state_to_string(desc->zs >> 4));
+        printf(" Type: %-14s", ss_zone_type_to_string(desc->zt));
+        printf(" Attrs: 0x%-x\n", desc->za);
         // pick the first zone which is empty to do I/O experiments
         if (!_ztest && desc->zs >> 4 == NVME_ZNS_ZS_EMPTY)
             _ztest = desc;
@@ -249,7 +264,8 @@ int ss_nvme_device_io_with_mdts(const int &fd, const unsigned &nsid,
 {
     //FIXME:
     while (buf_size) {
-        unsigned size = buf_size < (mdts_size - 2U) * lba_size ? buf_size : (mdts_size - 2U) * lba_size;
+        unsigned size = buf_size < (mdts_size - 2U) * lba_size ?
+                        buf_size : (mdts_size - 2U) * lba_size;
         unsigned short no_blocks = size / lba_size;
         if (read)
             ss_nvme_device_read(fd, nsid, slba, no_blocks, buffer, size);
