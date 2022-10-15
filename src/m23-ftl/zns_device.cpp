@@ -121,9 +121,9 @@ static void update_page_map(zns_info *info, unsigned long long page_addr,
 static unsigned request_transfer_size(zns_info *info, uint8_t type);
 static void release_transfer_size(zns_info *info, uint8_t type, unsigned size);
 static int read_from_zns(zns_info *info, unsigned long long physical_addr,
-                         void *buffer, uint32_t size, uint8_t type);
+                         void *buffer, uint64_t size, uint8_t type);
 static int append_to_data_zone(zns_info *info, zone_info *zone,
-                               void *buffer, uint32_t size, uint8_t type);
+                               void *buffer, uint64_t size, uint8_t type);
 static int append_to_log_zone(zns_info *info, unsigned long long page_addr,
                               void *buffer, uint32_t size);
 static int read_logical_block(zns_info *info, logical_block *block,
@@ -238,8 +238,8 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
     for (uint32_t i = 0U; i < info->num_data_zones; ++i) {
         info->logical_blocks[i].s_page_addr = i * info->zone_num_pages;
         info->logical_blocks[i].bitmap = (uint8_t *)
-                                         calloc((info->num_data_zones *
-                                                 info->zone_num_pages + 1UL
+                                         calloc(((info->num_data_zones *
+                                                  info->zone_num_pages + 1UL)
                                                  >> 3UL), sizeof(uint8_t));
         pthread_mutex_init(&info->logical_blocks[i].lock, NULL);
     }
@@ -296,7 +296,7 @@ int zns_udevice_read(user_zns_device *my_dev, uint64_t address,
                                                start->page_addr + 1ULL) *
                                               info->page_size;
                     read_from_zns(info, start->physical_addr,
-                                  (char *)buffer + buff_offset, curr_read_size,
+                                  (uint8_t *)buffer + buff_offset, curr_read_size,
                                   user_read);
                     start = curr;
                 }
@@ -308,12 +308,12 @@ int zns_udevice_read(user_zns_device *my_dev, uint64_t address,
             uint32_t curr_read_size = (prev->page_addr - start->page_addr +
                                        1ULL) * info->page_size;
             read_from_zns(info, start->physical_addr,
-                          (char *)buffer + buff_offset, curr_read_size,
+                          (uint8_t *)buffer + buff_offset, curr_read_size,
                           user_read);
         }
         pthread_mutex_unlock(&block->lock);
         page_addr += curr_block_read_size / info->page_size;
-        buffer = (char *)buffer + curr_block_read_size;
+        buffer = (uint8_t *)buffer + curr_block_read_size;
         size -= curr_block_read_size;
     }
     pthread_mutex_lock(&info->size_limit_lock);
@@ -341,7 +341,7 @@ int zns_udevice_write(user_zns_device *my_dev, uint64_t address,
                 // append null data until arrive offset
                 uint32_t null_size = (offset - block->data_zone->write_ptr) *
                                      info->page_size;
-                char null_buffer[null_size];
+                uint8_t null_buffer[null_size];
                 memset(null_buffer, 0, null_size);
                 int ret = append_to_data_zone(info, block->data_zone,
                                               null_buffer, null_size,
@@ -378,7 +378,7 @@ int zns_udevice_write(user_zns_device *my_dev, uint64_t address,
         }
         write_bitmap(block->bitmap, offset, curr_append_size / info->page_size);
         address += curr_append_size;
-        buffer = (char *)buffer + curr_append_size;
+        buffer = (uint8_t *)buffer + curr_append_size;
         size -= curr_append_size;
     }
     pthread_mutex_lock(&info->size_limit_lock);
@@ -391,6 +391,15 @@ int deinit_ss_zns_device(user_zns_device *my_dev)
 {
     zns_info *info = (zns_info *)my_dev->_private;
     // Kill gc
+    pthread_mutex_lock(&info->zones_lock);
+    if (info->used_log_zones)
+        info->used_log_zones_tail->next = info->curr_log_zone;
+    else
+        info->used_log_zones = info->curr_log_zone;
+    info->used_log_zones_tail = info->curr_log_zone;
+    info->curr_log_zone = NULL;
+    ++info->num_used_log_zones;
+    pthread_mutex_unlock(&info->zones_lock);
     info->run_gc = false;
     pthread_join(info->gc_thread, NULL);
     logical_block *blocks = info->logical_blocks;
@@ -425,9 +434,6 @@ int deinit_ss_zns_device(user_zns_device *my_dev)
         pthread_mutex_destroy(&tmp->write_ptr_lock);
         free(tmp);
     }
-    pthread_mutex_destroy(&info->curr_log_zone->num_valid_pages_lock);
-    pthread_mutex_destroy(&info->curr_log_zone->write_ptr_lock);
-    free(info->curr_log_zone);
     pthread_mutex_destroy(&info->size_limit_lock);
     pthread_mutex_destroy(&info->zones_lock);
     free(info);
@@ -639,7 +645,7 @@ static void release_transfer_size(zns_info *info, uint8_t type, unsigned size)
 }
 
 static int read_from_zns(zns_info *info, unsigned long long physical_addr,
-                         void *buffer, uint32_t size, uint8_t type)
+                         void *buffer, uint64_t size, uint8_t type)
 {
     while (size) {
         unsigned curr_transfer_size = request_transfer_size(info, type);
@@ -650,14 +656,14 @@ static int read_from_zns(zns_info *info, unsigned long long physical_addr,
                   0U, 0U, 0U, 0U, 0U, curr_read_size, buffer, 0U, NULL);
         release_transfer_size(info, type, curr_transfer_size);
         physical_addr += num_pages;
-        buffer = (char *)buffer + curr_read_size;
+        buffer = (uint8_t *)buffer + curr_read_size;
         size -= curr_read_size;
     }
     return errno;
 }
 
 static int append_to_data_zone(zns_info *info, zone_info *zone,
-                               void *buffer, uint32_t size, uint8_t type)
+                               void *buffer, uint64_t size, uint8_t type)
 {
     increase_write_ptr(zone, size / info->page_size);
     while (size) {
@@ -674,7 +680,7 @@ static int append_to_data_zone(zns_info *info, zone_info *zone,
         release_transfer_size(info, type, curr_transfer_size);
         if (errno)
             return errno;
-        buffer = (char *)buffer + curr_append_size;
+        buffer = (uint8_t *)buffer + curr_append_size;
         size -= curr_append_size;
     }
     return errno;
@@ -713,7 +719,7 @@ static int append_to_log_zone(zns_info *info, unsigned long long page_addr,
             change_log_zone(info);
         page_addr += num_curr_append_pages;
         physical_addr += num_curr_append_pages;
-        buffer = (char *)buffer + curr_append_size;
+        buffer = (uint8_t *)buffer + curr_append_size;
         size -= curr_append_size;
     }
     return errno;
@@ -740,7 +746,7 @@ static int read_logical_block(zns_info *info, logical_block *block,
             uint32_t curr_read_size = (prev->page_addr - start->page_addr +
                                        1ULL) * info->page_size;
             read_from_zns(info, start->physical_addr,
-                          (char *)buffer + buff_offset, curr_read_size,
+                          (uint8_t *)buffer + buff_offset, curr_read_size,
                           gc_read);
             start = curr;
         }
@@ -753,7 +759,7 @@ static int read_logical_block(zns_info *info, logical_block *block,
     uint32_t curr_read_size = (prev->page_addr - start->page_addr + 1ULL) *
                               info->page_size;
     read_from_zns(info, start->physical_addr,
-                  (char *)buffer + buff_offset, curr_read_size, gc_read);
+                  (uint8_t *)buffer + buff_offset, curr_read_size, gc_read);
     return errno;
 }
 
@@ -768,7 +774,7 @@ static void merge(zns_info *info, logical_block *block)
     if (block->data_zone && block->data_zone->write_ptr > size)
         size = block->data_zone->write_ptr;
     size *= info->page_size;
-    char buffer[size];
+    uint8_t buffer[size];
     memset(buffer, 0, size);
     read_logical_block(info, block, buffer);
     pthread_mutex_lock(&info->size_limit_lock);
@@ -814,25 +820,18 @@ static void *garbage_collection(void *info_ptr)
 {
     zns_info *info = (zns_info *)info_ptr;
     uint32_t index = 0U;
-    while (info->run_gc) {
-        while (info->num_log_zones - info->num_used_log_zones >
-               info->gc_wmark) {
-            if (!info->run_gc)
-                return NULL;
-        }
+    for (;;) {
+        while (info->run_gc &&
+               info->num_log_zones - info->num_used_log_zones > info->gc_wmark);
+        if (!info->num_used_log_zones)
+            break;
         logical_block *block = &info->logical_blocks[index];
         while(!block->page_maps) {
 	        index = (index + 1U) % info->num_data_zones;
             block = &info->logical_blocks[index];
-            if (!info->run_gc)
-                return NULL;
         }
-        if (!info->run_gc)
-            return NULL;
         // Merge logical block to data zone
         merge(info, block);
-        if (!info->run_gc)
-            return NULL;
         // Check used log zone valid counter
         // if zero reset and add to free zone list
         // Remove zone from used_log_zones
@@ -840,7 +839,7 @@ static void *garbage_collection(void *info_ptr)
         zone_info *prev = NULL;
         zone_info *free = NULL;
         zone_info *curr = info->used_log_zones;
-        while (info->run_gc && curr) {
+        while (curr) {
             if (!curr->num_valid_pages) {
                 // reset
                 decrease_write_ptr(curr, curr->write_ptr);
@@ -875,6 +874,34 @@ static void *garbage_collection(void *info_ptr)
         }
         index = (index + 1U) % info->num_data_zones;
     }
+    for (zone_info *zone = info->free_zones; zone; zone = zone->next) {
+        if (!zone->saddr)
+            return NULL;
+    }
+    logical_block *block = NULL;
+    for (uint32_t i = 0U; i < info->num_data_zones; ++i) {
+        if (info->logical_blocks[i].data_zone &&
+            !info->logical_blocks[i].data_zone->saddr) {
+            block = &info->logical_blocks[i];
+            break;
+        }
+    }
+    uint64_t size = block->data_zone->write_ptr * info->page_size;
+    uint8_t buffer[size];
+    read_from_zns(info, block->data_zone->saddr, buffer, size, gc_read);
+    info->used_status &= ~gc_read;
+    zone_info *old_data_zone = block->data_zone;
+    old_data_zone->write_ptr = 0U;
+    nvme_zns_mgmt_send(info->fd, info->nsid, old_data_zone->saddr, false,
+                       NVME_ZNS_ZSA_RESET, 0U, NULL);
+    block->data_zone = info->free_zones;
+    old_data_zone->next = info->free_zones->next;
+    if (info->num_free_zones == 1U)
+        info->free_zones_tail = old_data_zone;
+    info->free_zones = old_data_zone;
+    block->data_zone->next = NULL;
+    append_to_data_zone(info, block->data_zone, buffer, size, gc_write);
+    info->used_status &= ~gc_write;
     return NULL;
 }
 
