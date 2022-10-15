@@ -260,7 +260,8 @@ int zns_udevice_read(user_zns_device *my_dev, uint64_t address,
                                         info->page_size;
         if (curr_block_read_size > size)
             curr_block_read_size = size;
-        if (!read_bitmap(block->bitmap, offset, curr_block_read_size / info->page_size))
+        if (!read_bitmap(block->bitmap, offset,
+                         curr_block_read_size / info->page_size))
             return -1;
         pthread_mutex_lock(&block->lock);
         if (block->data_zone) {
