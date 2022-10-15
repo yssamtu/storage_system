@@ -32,6 +32,7 @@ SOFTWARE.
 extern "C" {
 
 enum {
+    dev_write = 0x0,
     user_read = 0x1,
     gc_read = 0x2,
     sb_read = user_read | gc_read,
