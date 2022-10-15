@@ -287,9 +287,9 @@ system?" << std::endl;
 =======" << std::endl;
     std::cout << "Milestone 1 results" << std::endl;
     std::cout << "Test 1 (read, write, append, reset) : "
-              << (t1 == 0 ? " Passed" : " Failed") << std::endl;
+              << (!t1 ? " Passed" : " Failed") << std::endl;
     std::cout << "Test 2 (Large zone read, write)     : "
-              << (t2 == 0 ? " Passed" : " Failed") << std::endl;
+              << (!t2 ? " Passed" : " Failed") << std::endl;
     std::cout << "=============================================================\
 =======" << std::endl;
     for(int i = 0; i < num_devices; ++i)

@@ -213,9 +213,9 @@ metadata, and the rest will be used for the FTL log" << std::endl;
 =======" << std::endl;
     std::cout << "Milestone 2 results" << std::endl;
     std::cout << "[stosys-result] Test 1 (write, read, and match on LBA0)   : "
-              << (t1 == 0 ? " Passed" : " Failed") << std::endl;
+              << (!t1 ? " Passed" : " Failed") << std::endl;
     printf("[stosys-result] Test 2 (%-3lu LBA write, read, match)       : %s \n",
-           max_num_lba_to_test, (t2 == 0 ? " Passed" : " Failed"));
+           max_num_lba_to_test, (!t2 ? " Passed" : " Failed"));
     std::cout << "=============================================================\
 =======" << std::endl;
     std::cout << "[stosys-stats] The elapsed time is "
