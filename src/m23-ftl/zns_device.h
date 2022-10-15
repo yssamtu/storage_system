@@ -34,35 +34,35 @@ extern "C" {
         (type *)( (char *)__mptr - offsetof(type,member) );})
 
 /* after a successful initialization of a device, you must set these ZNS device parameters for testing */
-struct zns_device_testing_params {
+typedef struct zns_device_testing_params {
     // LBA size at the ZNS device
     uint32_t zns_lba_size;
     // Zone size at the ZNS device
     uint32_t zns_zone_capacity;
     // total number of zones
     uint32_t zns_num_zones;
-};
+} zns_device_testing_params;
 
-struct user_zns_device {
+typedef struct user_zns_device {
     /* these are user visible properties */
     uint32_t lba_size_bytes; // the user device LBA size - should be some multiple of the ZNS device page size, you can keep it as it is
     uint64_t capacity_bytes; // total user device capacity
-    struct zns_device_testing_params tparams; // report back some ZNS device-level properties to the user (for testing only, this is not needed for functions
+    zns_device_testing_params tparams; // report back some ZNS device-level properties to the user (for testing only, this is not needed for functions
     // your own private data
     void *_private; //Points to zns_info
-};
+} user_zns_device;
 
-struct zdev_init_params {
+typedef struct zdev_init_params {
     char *name;
     int log_zones;
     int gc_wmark;
     bool force_reset;
-};
+} zdev_init_params;
 
-int init_ss_zns_device(struct zdev_init_params *params, struct user_zns_device **my_dev);
-int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size);
-int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size);
-int deinit_ss_zns_device(struct user_zns_device *my_dev);
+int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev);
+int zns_udevice_read(user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size);
+int zns_udevice_write(user_zns_device *my_dev, uint64_t address, void *buffer, uint32_t size);
+int deinit_ss_zns_device(user_zns_device *my_dev);
 
 };
 

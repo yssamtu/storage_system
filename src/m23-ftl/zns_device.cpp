@@ -131,8 +131,7 @@ static int read_logical_block(zns_info *info, logical_block *block,
 static void merge(zns_info *info, logical_block *block);
 static void *garbage_collection(void *info_ptr);
 
-int init_ss_zns_device(struct zdev_init_params *params,
-                       struct user_zns_device **my_dev)
+int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
 {
     *my_dev = (user_zns_device *)calloc(1UL, sizeof(user_zns_device));
     (*my_dev)->_private = calloc(1UL, sizeof(zns_info));
@@ -248,7 +247,7 @@ int init_ss_zns_device(struct zdev_init_params *params,
     return 0;
 }
 
-int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address,
+int zns_udevice_read(user_zns_device *my_dev, uint64_t address,
                      void *buffer, uint32_t size)
 {
     zns_info *info = (zns_info *)my_dev->_private;
@@ -320,7 +319,7 @@ int zns_udevice_read(struct user_zns_device *my_dev, uint64_t address,
     return errno;
 }
 
-int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address,
+int zns_udevice_write(user_zns_device *my_dev, uint64_t address,
                       void *buffer, uint32_t size)
 {
     zns_info *info = (zns_info *)my_dev->_private;
@@ -385,7 +384,7 @@ int zns_udevice_write(struct user_zns_device *my_dev, uint64_t address,
     return errno;
 }
 
-int deinit_ss_zns_device(struct user_zns_device *my_dev)
+int deinit_ss_zns_device(user_zns_device *my_dev)
 {
     zns_info *info = (zns_info *)my_dev->_private;
     // Kill gc
