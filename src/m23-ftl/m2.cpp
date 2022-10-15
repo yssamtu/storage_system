@@ -22,7 +22,6 @@ SOFTWARE.
 
 #include <cassert>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <iostream>
@@ -33,10 +32,11 @@ SOFTWARE.
 
 extern "C" {
 
-static int write_read_random_lbas(user_zns_device *my_dev, void *buf,
-                                  uint32_t buf_size, uint64_t max_lbas_to_test)
+static int write_read_random_lbas(const user_zns_device &my_dev, void *buf,
+                                  const uint32_t &buf_size,
+                                  const uint64_t &max_lbas_to_test)
 {
-    uint32_t max_lba_entries = my_dev->capacity_bytes / my_dev->lba_size_bytes;
+    uint32_t max_lba_entries = my_dev.capacity_bytes / my_dev.lba_size_bytes;
     if (max_lba_entries < max_lbas_to_test) {
         std::cout << "Error: not sufficient LBAs available, pass a smaller \
 number" << std::endl;
@@ -50,11 +50,11 @@ number" << std::endl;
     for (uint64_t i = start_lba; i < start_lba + max_lbas_to_test; ++i) {
         // make a unique pattern for each write - ith iteration
         write_pattern_with_start(static_cast<char *>(buf), buf_size, i);
-        int ret = zns_udevice_write(my_dev, i * my_dev->lba_size_bytes,
-                                    buf, buf_size);
+        int ret = zns_udevice_write(const_cast<user_zns_device *>(&my_dev),
+                                    i * my_dev.lba_size_bytes, buf, buf_size);
         if (ret) {
             std::cout << "Error: writing the device failed at address 0x"
-                      << std::hex << i * my_dev->lba_size_bytes << std::dec
+                      << std::hex << i * my_dev.lba_size_bytes << std::dec
                       << " [index " << i - start_lba << "]" << std::endl;
             return ret;
         }
@@ -65,11 +65,11 @@ number" << std::endl;
     for (uint64_t i = start_lba; i < start_lba + max_lbas_to_test; ++i) {
         // make a unique pattern for each write
         bzero(static_cast<char *>(buf), buf_size);
-        int ret = zns_udevice_read(my_dev, i * my_dev->lba_size_bytes,
-                                   buf, buf_size);
+        int ret = zns_udevice_read(const_cast<user_zns_device *>(&my_dev),
+                                   i * my_dev.lba_size_bytes, buf, buf_size);
         if (ret) {
             std::cout << "Error: writing the device failed at address 0x"
-                      << std::hex << i * my_dev->lba_size_bytes << std::dec
+                      << std::hex << i * my_dev.lba_size_bytes << std::dec
                       << " [index " << i - start_lba << "]" << std::endl;
             return ret;
         }
@@ -81,11 +81,13 @@ number" << std::endl;
     return 0;
 }
 
-static int write_read_lba0(user_zns_device *dev, void *buf, uint32_t buf_size)
+static int write_read_lba0(const user_zns_device &dev,
+                           void *buf, const uint32_t &buf_size)
 {
     write_pattern(static_cast<char *>(buf), buf_size);
     uint64_t test_lba = 0UL;
-    int ret = zns_udevice_write(dev, test_lba, buf, buf_size);
+    int ret = zns_udevice_write(const_cast<user_zns_device *>(&dev), test_lba,
+                                buf, buf_size);
     if (ret) {
         std::cout << "Error: writing the device failed at address 0x"
                   << std::hex << test_lba << std::dec << std::endl;
@@ -95,7 +97,8 @@ static int write_read_lba0(user_zns_device *dev, void *buf, uint32_t buf_size)
               << std::hex << test_lba << std::dec << std::endl;
     // zero it out
     bzero(buf, buf_size);
-    ret = zns_udevice_read(dev, test_lba, buf, buf_size);
+    ret = zns_udevice_read(const_cast<user_zns_device *>(&dev), test_lba,
+                           buf, buf_size);
     if (ret) {
         std::cout << "Error: reading the device failed at address 0x"
                   << std::hex << test_lba << std::dec << std::endl;
@@ -198,9 +201,9 @@ hybrid log-structure ZTL (Zone Translation Layer) on top of the ZNS (no GC)"
     std::cout << "Why? we assume one zone will eventually be taken for writing \
 metadata, and the rest will be used for the FTL log" << std::endl;
     std::unique_ptr<char []> test_buf(new char[my_dev->lba_size_bytes]());
-    int t1 = write_read_lba0(my_dev, test_buf.get(), my_dev->lba_size_bytes);
+    int t1 = write_read_lba0(*my_dev, test_buf.get(), my_dev->lba_size_bytes);
     // -1 because we have already written one LBA.
-    int t2 = write_read_random_lbas(my_dev, test_buf.get(),
+    int t2 = write_read_random_lbas(*my_dev, test_buf.get(),
                                     my_dev->lba_size_bytes,
                                     max_num_lba_to_test - 1UL);
     ret = deinit_ss_zns_device(my_dev);

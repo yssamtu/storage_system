@@ -22,7 +22,6 @@ SOFTWARE.
 
 #include <cassert>
 #include <cerrno>
-#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <memory>

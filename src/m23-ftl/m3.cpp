@@ -23,7 +23,6 @@ SOFTWARE.
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -54,11 +53,11 @@ static int get_sequence_as_array(const uint64_t &capacity, uint64_t *&arr,
 extern "C" {
 
 static int _complete_file_io(const int &fd, const uint64_t &offset,
-                             void *buf, const int &sz, const int &is_read)
+                             void *buf, const uint32_t &sz, const bool &is_read)
 {
-    uint64_t written_so_far = 0;
+    uint32_t written_so_far = 0;
     uintptr_t ptr = reinterpret_cast<uintptr_t>(buf);
-    while (written_so_far < static_cast<uint64_t>(sz)) {
+    while (written_so_far < sz) {
         int ret = 0;
         if(is_read)
             ret = pread(fd, reinterpret_cast<void *>(ptr + written_so_far),
@@ -78,37 +77,40 @@ static int _complete_file_io(const int &fd, const uint64_t &offset,
 }
 
 static int write_complete_file(const int &fd, const uint64_t &offset,
-                               void *buf, const int &sz)
+                               void *buf, const uint32_t &sz)
 {
-    return _complete_file_io(fd, offset, buf, sz, 0);
+    return _complete_file_io(fd, offset, buf, sz, false);
 }
 
 static int read_complete_file(const int &fd, const uint64_t &offset,
-                              void *buf, const int &sz)
+                              void *buf, const uint32_t &sz)
 {
-    return _complete_file_io(fd, offset, buf, sz, 1);
+    return _complete_file_io(fd, offset, buf, sz, true);
 }
 
 /*
- * Based on if the addr_list was in sequence or randomized - we will do sequential or random I/O
+ * Based on if the addr_list was in sequence or randomized -
+ * we will do sequential or random I/O
  * --
- * So the idea of this test is to write a parallel file on the side which has the same content, and the
+ * So the idea of this test is to write a parallel file on the side
+ * which has the same content, and the
  * ZNS device content should match with this file.
  *
  * addr_list = list of LBAs how they should be accessed
  * list_size = size of the address list
- * max_hammer_io = a random number, for how many times I should randomly do a write on a random LBA
+ * max_hammer_io = a random number,
+ * for how many times I should randomly do a write on a random LBA
  */
-static int wr_full_device_verify(const user_zns_device *dev,
+static int wr_full_device_verify(const user_zns_device &dev,
                                  const uint64_t *addr_list,
                                  const uint32_t &list_size,
                                  const uint32_t &max_hammer_io)
 {
-    std::unique_ptr<char []> b1(new char[dev->lba_size_bytes]());
-    std::unique_ptr<char []> b2(new char[dev->lba_size_bytes]());
+    std::unique_ptr<char []> b1(new char[dev.lba_size_bytes]());
+    std::unique_ptr<char []> b2(new char[dev.lba_size_bytes]());
     assert(b1);
     assert(b2);
-    write_pattern(b1.get(), dev->lba_size_bytes);
+    write_pattern(b1.get(), dev.lba_size_bytes);
     const char *tmp_file = "./tmp-output-fulld";
     int fd = open(tmp_file, O_RDWR|O_CREAT, 0666);
     if (fd < 0) {
@@ -116,33 +118,33 @@ static int wr_full_device_verify(const user_zns_device *dev,
         return -1;
     }
     // allocate this side file to the full capacity
-    int ret = posix_fallocate(fd, 0, dev->capacity_bytes);
+    int ret = posix_fallocate(fd, 0, dev.capacity_bytes);
     if (ret) {
         std::cout << "Error: fallocate failed, ret " << ret;
         return -1;
     }
     std::cout << "fallocate OK with " << tmp_file << "s and size 0x"
-              << std::hex << dev->capacity_bytes << std::dec << std::endl;
+              << std::hex << dev.capacity_bytes << std::dec << std::endl;
     // https://stackoverflow.com/questions/29381843/generate-random-number-in-range-min-max
     const int min = 0;
-    const int max = dev->lba_size_bytes;
+    const int max = dev.lba_size_bytes;
     //initialize the device, otherwise we may have indexes
     // where there is random garbage in both cases
     for (uint32_t i = 0; i < list_size; ++i) {
-        uint64_t woffset = addr_list[i] * dev->lba_size_bytes;
+        uint64_t woffset = addr_list[i] * dev.lba_size_bytes;
         //random offset within the page and just write some random stuff =
         // this is to make a unique I/O pattern
         b1[(min + rand() % (max - min))] = (char) rand();
         // now we need to write the buffer in parallel to the zns device
         // and the file
-        ret = zns_udevice_write(const_cast<user_zns_device *>(dev), woffset,
-                                b1.get(), dev->lba_size_bytes);
+        ret = zns_udevice_write(const_cast<user_zns_device *>(&dev), woffset,
+                                b1.get(), dev.lba_size_bytes);
         if (ret) {
             std::cout << "Error: ZNS device writing failed at offset 0x"
                       << std::hex << woffset << std::dec << std::endl;
             goto done;
         }
-        ret = write_complete_file(fd, woffset, b1.get(), dev->lba_size_bytes);
+        ret = write_complete_file(fd, woffset, b1.get(), dev.lba_size_bytes);
         if (ret) {
             std::cout << "Error: file writing failed at offset 0x"
                       << std::hex << woffset << std::dec << std::endl;
@@ -157,21 +159,21 @@ static int wr_full_device_verify(const user_zns_device *dev,
         for (uint32_t i = 0; i < max_hammer_io; ++i) {
             // we should not generate offset which is within the list_size
             uint64_t woffset = addr_list[0 + rand() % (list_size - 0)] *
-                               dev->lba_size_bytes;
+                               dev.lba_size_bytes;
             //random offset within the page and just write some random stuff,
             // like i
             b1[(min + rand() % (max - min))] = static_cast<char>(rand());
             // now we need to write the buffer in parallel to the zns device,
             // and the file
-            ret = zns_udevice_write(const_cast<user_zns_device *>(dev), woffset,
-                                    b1.get(), dev->lba_size_bytes);
+            ret = zns_udevice_write(const_cast<user_zns_device *>(&dev),
+                                    woffset, b1.get(), dev.lba_size_bytes);
             if (ret) {
                 std::cout << "Error: ZNS device writing failed at offset 0x"
                           << std::hex << woffset << std::dec << std::endl;
                 goto done;
             }
             ret = write_complete_file(fd, woffset,
-                                      b1.get(), dev->lba_size_bytes);
+                                      b1.get(), dev.lba_size_bytes);
             if (ret) {
                 std::cout << "Error: file writing failed at offset 0x"
                           << std::hex << woffset << std::dec << std::endl;
@@ -183,20 +185,20 @@ static int wr_full_device_verify(const user_zns_device *dev,
     }
     std::cout << "verifying the content of the ZNS device ...." << std::endl;
     // reset the buffers
-    write_pattern(b1.get(), dev->lba_size_bytes);
-    write_pattern(b2.get(), dev->lba_size_bytes);
+    write_pattern(b1.get(), dev.lba_size_bytes);
+    write_pattern(b2.get(), dev.lba_size_bytes);
     // and now read the whole device and compare the content with the file
     for (uint32_t i = 0; i < list_size; ++i) {
-        uint64_t roffset = addr_list[i] * dev->lba_size_bytes;
+        uint64_t roffset = addr_list[i] * dev.lba_size_bytes;
         // now we need to write the buffer in parallel to the zns device,
         // and the file
-        ret = zns_udevice_read(const_cast<user_zns_device *>(dev), roffset,
-                               b1.get(), dev->lba_size_bytes);
+        ret = zns_udevice_read(const_cast<user_zns_device *>(&dev), roffset,
+                               b1.get(), dev.lba_size_bytes);
         assert(!ret);
-        ret = read_complete_file(fd, roffset, b2.get(), dev->lba_size_bytes);
+        ret = read_complete_file(fd, roffset, b2.get(), dev.lba_size_bytes);
         assert(!ret);
         //now both of these should match
-        for(uint32_t j = 0; j < dev->lba_size_bytes; ++j)
+        for(uint32_t j = 0; j < dev.lba_size_bytes; ++j)
             if (b1[j] != b2[j]) {
                 std::cout << "ERROR: buffer mismatch at i " << i
                           << " and j " << j << " , address is 0"
@@ -332,9 +334,11 @@ working of the FTL. You passed " << params.gc_wmark << std::endl;
               << " and capacity " << my_dev->capacity_bytes
               << " , max total LBA " << max_lba_entries
               << " to_hammer " << to_hammer_lba << std::endl;
-    int t1 = wr_full_device_verify(my_dev, seq_addresses, max_lba_entries, 0U);
-    int t2 = wr_full_device_verify(my_dev, random_addresses, max_lba_entries, 0U);
-    int t3 = wr_full_device_verify(my_dev, random_addresses, max_lba_entries, to_hammer_lba);
+    int t1 = wr_full_device_verify(*my_dev, seq_addresses, max_lba_entries, 0U);
+    int t2 = wr_full_device_verify(*my_dev, random_addresses, max_lba_entries,
+                                   0U);
+    int t3 = wr_full_device_verify(*my_dev, random_addresses, max_lba_entries,
+                                   to_hammer_lba);
     // clean up
     ret = deinit_ss_zns_device(my_dev);
     // free all
