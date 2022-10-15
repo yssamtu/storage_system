@@ -775,7 +775,6 @@ static void merge(zns_info *info, logical_block *block)
         size = block->data_zone->write_ptr;
     size *= info->page_size;
     uint8_t buffer[size];
-    memset(buffer, 0, size);
     read_logical_block(info, block, buffer);
     pthread_mutex_lock(&info->size_limit_lock);
     info->used_status &= ~gc_read;
