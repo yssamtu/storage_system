@@ -41,25 +41,25 @@ enum {
 };
 
 // zone in zns
-struct zone_info {
+typedef struct zone_info {
     unsigned long long saddr;
     uint32_t num_valid_pages;
     uint32_t write_ptr;
     pthread_mutex_t num_valid_pages_lock;
     pthread_mutex_t write_ptr_lock;
-    zone_info *next; // linked in free_zones and used_log_zones
-};
+    struct zone_info *next; // linked in free_zones and used_log_zones
+} zone_info;
 
 // page map for log zones
-struct page_map {
+typedef struct page_map {
     unsigned long long page_addr;
     unsigned long long physical_addr;
     zone_info *zone;
-    page_map *next; // page map for each logical block
-};
+    struct page_map *next; // page map for each logical block
+} page_map;
 
 // Contains data in log zone (page map) and data in data zone (block map)
-struct logical_block {
+typedef struct logical_block {
     unsigned long long s_page_addr;
     page_map *page_maps; // page mapping for this logical block (log zone)
     page_map *old_page_maps;
@@ -68,9 +68,9 @@ struct logical_block {
     uint8_t *bitmap;
     //TODO: LOCK the access
     pthread_mutex_t lock;
-};
+} logical_block;
 
-struct zns_info {
+typedef struct zns_info {
     // Values from init parameters
     int num_log_zones;
     int gc_wmark;
@@ -101,7 +101,7 @@ struct zns_info {
     pthread_mutex_t zones_lock; // Lock for changing used_log_zone and free_zone
     // logical block corresponding to each data zone
     logical_block *logical_blocks;
-};
+} zns_info;
 
 static inline void increase_num_valid_page(zone_info *zone, uint32_t num_pages);
 static inline void decrease_num_valid_page(zone_info *zone, uint32_t num_pages);
