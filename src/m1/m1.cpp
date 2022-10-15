@@ -89,7 +89,7 @@ static int test1_lba_io_test(const int &zfd, const unsigned &nsid,
         unsigned long long returned_slba = -1;
         ret = ss_zns_device_zone_reset(zfd, nsid, zone_slba);
         assert(!ret);
-        std::cout << "zone at 0x" << std::hex << zone_slba
+        std::cout << "zone at 0x" << std::hex << zone_slba << std::dec
                   << " is reset successfully" << std::endl;
         // step 2: write 2x blocks, hence 2x the buffer size
         std::unique_ptr<char []> w_pattern2(new char[2UL *
@@ -114,8 +114,8 @@ static int test1_lba_io_test(const int &zfd, const unsigned &nsid,
                                         &returned_slba);
         assert(!ret);
         std::cout << "zone is APPENDED 2x successfully, returned pointer is at "
-                  << std::hex << returned_slba << " (to match "
-                  << std::hex << write_lba << ")" << std::endl;
+                  << std::hex << returned_slba << std::dec << " (to match "
+                  << std::hex << write_lba << std::dec << ")" << std::endl;
         // match that the returned pointer -
         // which should be the original write ptr location.
         // returned pointer is where the data is appended
@@ -167,11 +167,12 @@ trying to read and write a complete zone of size "
     write_pattern(data.get(), zone_size_in_bytes);
     // now reset, and then write the full zone
     std::cout << "\t trying to reset the zone at 0x"
-              << std::hex << zslba << std::endl;
+              << std::hex << zslba << std::dec << std::endl;
     int ret = ss_zns_device_zone_reset(zfd, nsid, zslba);
     if (ret) {
         std::cout << "Error: zone rest on 0x"
-                  << std::hex << zslba << " failed, ret " << ret << std::endl;
+                  << std::hex << zslba << std::dec
+                  << " failed, ret " << ret << std::endl;
         goto done;
     }
     ret = ss_nvme_device_io_with_mdts(zfd, nsid, zslba, data.get(),
@@ -179,7 +180,8 @@ trying to read and write a complete zone of size "
                                       MDTS, false);
     if (ret) {
         std::cout << "Error: zone writing on 0x"
-                  << std::hex << zslba << " failed, ret " << ret << std::endl;
+                  << std::hex << zslba << std::dec
+                  << " failed, ret " << ret << std::endl;
         goto done;
     }
     // now read the zone
@@ -189,7 +191,8 @@ trying to read and write a complete zone of size "
                                       MDTS, true);
     if (ret) {
         std::cout << "Error: zone reading on 0x"
-                  << std::hex << zslba << " failed, ret " << ret << std::endl;
+                  << std::hex << zslba << std::dec
+                  << " failed, ret " << ret << std::endl;
         goto done;
     }
     std::cout << "\t the whole zone reading done" << std::endl;
