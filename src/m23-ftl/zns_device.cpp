@@ -874,10 +874,12 @@ static void *garbage_collection(void *info_ptr)
         }
         index = (index + 1U) % info->num_data_zones;
     }
+    // check the first zone is free zone or not
     for (zone_info *zone = info->free_zones; zone; zone = zone->next) {
         if (!zone->saddr)
             return NULL;
     }
+    // find which logical block has the first zone
     logical_block *block = NULL;
     for (uint32_t i = 0U; i < info->num_data_zones; ++i) {
         if (info->logical_blocks[i].data_zone &&
@@ -886,6 +888,7 @@ static void *garbage_collection(void *info_ptr)
             break;
         }
     }
+    // clean the first zone
     uint64_t size = block->data_zone->write_ptr * info->page_size;
     uint8_t buffer[size];
     read_from_zns(info, block->data_zone->saddr, buffer, size, gc_read);
