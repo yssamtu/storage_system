@@ -239,9 +239,9 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
     for (uint32_t i = 0U; i < info->num_data_zones; ++i) {
         info->logical_blocks[i].s_page_addr = i * info->zone_num_pages;
         info->logical_blocks[i].bitmap = (uint8_t *)
-                                         calloc(((info->num_data_zones *
-                                                  info->zone_num_pages + 1UL)
-                                                 >> 3UL), sizeof(uint8_t));
+                                         calloc(((info->zone_num_pages - 1UL)
+                                                 >> 3UL) + 1UL,
+                                                sizeof(uint8_t));
         pthread_mutex_init(&info->logical_blocks[i].lock, NULL);
     }
     //Start GC
