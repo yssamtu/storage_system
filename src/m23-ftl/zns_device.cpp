@@ -33,13 +33,14 @@ SOFTWARE.
 extern "C" {
 
 enum {
-    dev_io = 0x0,
     user_read = 0x1,
     gc_read = 0x2,
-    sb_read = user_read | gc_read, // user or gc is reading
+    dev_read = 0x4,
+    sb_read = user_read | gc_read | dev_read, // user or gc is reading
     user_write = 0x10,
     gc_write = 0x20,
-    sb_write = user_write | gc_write // user or gc is writing
+    dev_write = 0x40,
+    sb_write = user_write | gc_write | dev_write // user or gc is writing
 };
 
 // zone in zns
@@ -205,19 +206,6 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
     info->free_append_size = info->zasl;
     // initialise size_limit_lock
     pthread_mutex_init(&info->size_limit_lock, NULL);
-    // set all zone to free_zones
-    info->free_zones = (zone_info *)calloc(1UL, sizeof(zone_info));
-    info->free_zones_tail = info->free_zones;
-    pthread_mutex_init(&info->free_zones->num_valid_pages_lock, NULL);
-    pthread_mutex_init(&info->free_zones->write_ptr_lock, NULL);
-    for (uint32_t i = 1U; i < info->num_zones; ++i) {
-        info->free_zones_tail->next = (zone_info *)calloc(1UL,
-                                                          sizeof(zone_info));
-        info->free_zones_tail = info->free_zones_tail->next;
-        info->free_zones_tail->saddr = i * info->zone_num_pages;
-        pthread_mutex_init(&info->free_zones_tail->num_valid_pages_lock, NULL);
-        pthread_mutex_init(&info->free_zones_tail->write_ptr_lock, NULL);
-    }
     // reset device
     if (params->force_reset) {
         free(zns_report);
@@ -229,7 +217,7 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
         }
         // set log zone page mapped hashmap size to num_data_zones
         info->logical_blocks = (logical_block *)calloc(info->num_data_zones,
-                                                    sizeof(logical_block));
+                                                       sizeof(logical_block));
         info->bitmap_size = ((info->zone_num_pages - 1U) >> 3U) + 1U;
         for (uint32_t i = 0U; i < info->num_data_zones; ++i) {
             info->logical_blocks[i].s_page_addr = i * info->zone_num_pages;
@@ -238,29 +226,102 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
                                                     sizeof(uint8_t));
             pthread_mutex_init(&info->logical_blocks[i].lock, NULL);
         }
+        // set all zone to free_zones
+        info->free_zones = (zone_info *)calloc(1UL, sizeof(zone_info));
+        info->free_zones_tail = info->free_zones;
+        pthread_mutex_init(&info->free_zones->num_valid_pages_lock, NULL);
+        pthread_mutex_init(&info->free_zones->write_ptr_lock, NULL);
+        for (uint32_t i = 1U; i < info->num_zones; ++i) {
+            info->free_zones_tail->next = (zone_info *)
+                                          calloc(1UL, sizeof(zone_info));
+            info->free_zones_tail = info->free_zones_tail->next;
+            info->free_zones_tail->saddr = i * info->zone_num_pages;
+            pthread_mutex_init(&info->free_zones_tail->num_valid_pages_lock,
+                               NULL);
+            pthread_mutex_init(&info->free_zones_tail->write_ptr_lock, NULL);
+        }
         // set num_free_zones
         info->num_free_zones = info->num_zones;
-        //Set current log zone to 0th zone
-        info->curr_log_zone = info->free_zones;
-        info->free_zones = info->free_zones->next;
-        if (!info->free_zones)
-            info->free_zones_tail = NULL;
-        info->curr_log_zone->next = NULL;
-        --info->num_free_zones;
-        // init zones_lock
-        pthread_mutex_init(&info->zones_lock, NULL);
     } else {
         uint32_t read_size = le64_to_cpu(zns_report->entries[0].wp) *
                              info->page_size;
         free(zns_report);
         uint8_t *blocks_info = (uint8_t *)calloc(read_size, sizeof(uint8_t));
-        read_from_zns(info, 0ULL, blocks_info, read_size, dev_io);
+        read_from_zns(info, 0ULL, blocks_info, read_size, dev_read);
         nvme_zns_mgmt_send(info->fd, info->nsid, 0ULL, false,
                            NVME_ZNS_ZSA_RESET, 0U, NULL);
+        // set log zone page mapped hashmap size to num_data_zones
+        info->logical_blocks = (logical_block *)calloc(info->num_data_zones,
+                                                       sizeof(logical_block));
+        info->bitmap_size = ((info->zone_num_pages - 1U) >> 3U) + 1U;
         uint8_t *ptr = blocks_info;
         std::unordered_set<uint32_t> used_zones_index;
+        for (uint32_t i = 0U; i < info->num_data_zones; ++i) {
+            info->logical_blocks[i].s_page_addr = i * info->zone_num_pages;
+            info->logical_blocks[i].bitmap = (uint8_t *)
+                                             calloc(info->bitmap_size,
+                                                    sizeof(uint8_t));
+            memcpy(info->logical_blocks[i].bitmap, ptr, info->bitmap_size);
+            ptr += info->bitmap_size;
+            if (*ptr) {
+                ptr += sizeof(uint8_t);
+                info->logical_blocks[i].data_zone = (zone_info *)
+                                                    calloc(1UL,
+                                                           sizeof(zone_info));
+                memcpy(&info->logical_blocks[i].data_zone->saddr, ptr,
+                       sizeof(zone_info::saddr));
+                ptr += sizeof(zone_info::saddr);
+                memcpy(&info->logical_blocks[i].data_zone->write_ptr, ptr,
+                       sizeof(zone_info::write_ptr));
+                ptr += sizeof(zone_info::write_ptr);
+                pthread_mutex_init(
+                    &info->logical_blocks[i].data_zone->num_valid_pages_lock,
+                    NULL
+                );
+                pthread_mutex_init(
+                    &info->logical_blocks[i].data_zone->write_ptr_lock,
+                    NULL
+                );
+                used_zones_index.emplace(
+                    info->logical_blocks[i].data_zone->saddr /
+                    info->zone_num_pages
+                );
+            } else {
+                ptr += sizeof(uint8_t) + sizeof(zone_info::saddr) +
+                       sizeof(zone_info::write_ptr);
+            }
+            pthread_mutex_init(&info->logical_blocks[i].lock, NULL);
+        }
         free(blocks_info);
+        // set rest zone to free_zones
+        info->free_zones = (zone_info *)calloc(1UL, sizeof(zone_info));
+        info->free_zones_tail = info->free_zones;
+        pthread_mutex_init(&info->free_zones->num_valid_pages_lock, NULL);
+        pthread_mutex_init(&info->free_zones->write_ptr_lock, NULL);
+        for (uint32_t i = 1U; i < info->num_zones; ++i) {
+            if (!used_zones_index.count(i)) {
+                info->free_zones_tail->next = (zone_info *)
+                                              calloc(1UL, sizeof(zone_info));
+                info->free_zones_tail = info->free_zones_tail->next;
+                info->free_zones_tail->saddr = i * info->zone_num_pages;
+                pthread_mutex_init(&info->free_zones_tail->num_valid_pages_lock,
+                                   NULL);
+                pthread_mutex_init(&info->free_zones_tail->write_ptr_lock,
+                                   NULL);
+            }
+        }
+        // set num_free_zones
+        info->num_free_zones = info->num_zones - used_zones_index.size();
     }
+    //Set current log zone to 0th zone
+    info->curr_log_zone = info->free_zones;
+    info->free_zones = info->free_zones->next;
+    if (!info->free_zones)
+        info->free_zones_tail = NULL;
+    info->curr_log_zone->next = NULL;
+    --info->num_free_zones;
+    // init zones_lock
+    pthread_mutex_init(&info->zones_lock, NULL);
     // set gc_wmark
     info->gc_wmark = params->gc_wmark > 0 ? params->gc_wmark : 0U;
     //Start GC
@@ -411,15 +472,26 @@ int deinit_ss_zns_device(user_zns_device *my_dev)
 {
     zns_info *info = (zns_info *)my_dev->_private;
     // Kill gc
-    pthread_mutex_lock(&info->zones_lock);
-    if (info->used_log_zones)
-        info->used_log_zones_tail->next = info->curr_log_zone;
-    else
-        info->used_log_zones = info->curr_log_zone;
-    info->used_log_zones_tail = info->curr_log_zone;
-    info->curr_log_zone = NULL;
-    ++info->num_used_log_zones;
-    pthread_mutex_unlock(&info->zones_lock);
+    if (info->curr_log_zone->write_ptr) {
+        pthread_mutex_lock(&info->zones_lock);
+        if (info->used_log_zones)
+            info->used_log_zones_tail->next = info->curr_log_zone;
+        else
+            info->used_log_zones = info->curr_log_zone;
+        info->used_log_zones_tail = info->curr_log_zone;
+        info->curr_log_zone = NULL;
+        ++info->num_used_log_zones;
+        pthread_mutex_unlock(&info->zones_lock);
+    } else {
+        pthread_mutex_lock(&info->zones_lock);
+        if (info->free_zones)
+            info->free_zones_tail->next = info->curr_log_zone;
+        else
+            info->free_zones = info->curr_log_zone;
+        info->free_zones_tail = info->curr_log_zone;
+        ++info->num_free_zones;
+        pthread_mutex_unlock(&info->zones_lock);
+    }
     info->run_gc = false;
     pthread_join(info->gc_thread, NULL);
     uint64_t block_info_size = info->bitmap_size + sizeof(uint8_t) +
@@ -455,7 +527,7 @@ int deinit_ss_zns_device(user_zns_device *my_dev)
     }
     free(blocks);
     append_to_data_zone(info, info->free_zones,
-                        blocks_info, append_size, dev_io);
+                        blocks_info, append_size, dev_write);
     free(blocks_info);
     while (info->free_zones) {
         zone_info *tmp = info->free_zones;
@@ -904,9 +976,16 @@ static void *garbage_collection(void *info_ptr)
         index = (index + 1U) % info->num_data_zones;
     }
     // check the first zone is free zone or not
-    for (zone_info *zone = info->free_zones; zone; zone = zone->next) {
-        if (!zone->saddr)
+    if (!info->free_zones->saddr)
+        return NULL;
+    for (zone_info *prev = info->free_zones, *zone = prev->next; zone; prev = zone, zone = zone->next) {
+        if (!zone->saddr) {
+            zone_info *tmp = zone;
+            prev->next = zone->next;
+            tmp->next = info->free_zones;
+            info->free_zones = tmp;
             return NULL;
+        }
     }
     // find which logical block has the first zone
     logical_block *block = NULL;
