@@ -407,11 +407,6 @@ int deinit_ss_zns_device(user_zns_device *my_dev)
     // free hashmap
     for (uint32_t i = 0U; i < info->num_data_zones; ++i) {
 	    // Clear all log heads for a logical block
-        while (blocks[i].page_maps) {
-            page_map *tmp = blocks[i].page_maps;
-            blocks[i].page_maps = blocks[i].page_maps->next;
-            free(tmp);
-        }
         if (blocks[i].data_zone) {
             pthread_mutex_destroy(&blocks[i].data_zone->num_valid_pages_lock);
             pthread_mutex_destroy(&blocks[i].data_zone->write_ptr_lock);
@@ -421,13 +416,6 @@ int deinit_ss_zns_device(user_zns_device *my_dev)
         pthread_mutex_destroy(&blocks[i].lock);
     }
     free(blocks);
-    while (info->used_log_zones) {
-        zone_info *tmp = info->used_log_zones;
-        info->used_log_zones = info->used_log_zones->next;
-        pthread_mutex_destroy(&tmp->num_valid_pages_lock);
-        pthread_mutex_destroy(&tmp->write_ptr_lock);
-        free(tmp);
-    }
     while (info->free_zones) {
         zone_info *tmp = info->free_zones;
         info->free_zones = info->free_zones->next;
