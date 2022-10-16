@@ -214,13 +214,15 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
     info->logical_blocks = (logical_block *)calloc(info->num_data_zones,
                                                    sizeof(logical_block));
     info->bitmap_size = ((info->zone_num_pages - 1U) >> 3U) + 1U;
-    if (params->force_reset) {
+    if (params->force_reset || !blocks_info_size) {
         // reset device
-        ret = nvme_zns_mgmt_send(info->fd, info->nsid, 0ULL, true,
-                                 NVME_ZNS_ZSA_RESET, 0U, NULL);
-        if (ret) {
-            printf("Zone reset failed %d\n", ret);
-            return ret;
+        if (params->force_reset) {
+            ret = nvme_zns_mgmt_send(info->fd, info->nsid, 0ULL, true,
+                                    NVME_ZNS_ZSA_RESET, 0U, NULL);
+            if (ret) {
+                printf("Zone reset failed %d\n", ret);
+                return ret;
+            }
         }
         // set logical block
         for (uint32_t i = 0U; i < info->num_data_zones; ++i) {
@@ -496,7 +498,7 @@ int deinit_ss_zns_device(user_zns_device *my_dev)
             ptr += sizeof(zone_info::write_ptr);
 	        free(blocks[i].data_zone);
         } else {
-            ptr += sizeof(bool) + sizeof(zone_info::saddr) +
+            ptr += sizeof(uint8_t) + sizeof(zone_info::saddr) +
                    sizeof(zone_info::write_ptr);
         }
         pthread_mutex_destroy(&blocks[i].lock);
