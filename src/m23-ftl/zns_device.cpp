@@ -302,8 +302,8 @@ int zns_udevice_read(user_zns_device *my_dev, uint64_t address,
                                                start->page_addr + 1ULL) *
                                               info->page_size;
                     read_from_zns(info, start->physical_addr,
-                                  (uint8_t *)buffer + buff_offset, curr_read_size,
-                                  user_read);
+                                  (uint8_t *)buffer + buff_offset,
+                                  curr_read_size, user_read);
                     start = curr;
                 }
                 prev = curr;
