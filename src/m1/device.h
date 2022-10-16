@@ -24,6 +24,8 @@ SOFTWARE.
 #ifndef STOSYS_PROJECT_DEVICE_H
 #define STOSYS_PROJECT_DEVICE_H
 
+#include <cstdint>
+
 extern "C" {
 // we will use an ss_ extension
 // to differentiate our struct definitions from the standard library

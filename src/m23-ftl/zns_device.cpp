@@ -25,6 +25,7 @@ SOFTWARE.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unordered_set>
 #include <libnvme.h>
 #include <pthread.h>
 #include "zns_device.h"
@@ -32,7 +33,7 @@ SOFTWARE.
 extern "C" {
 
 enum {
-    dev_write = 0x0,
+    dev_io = 0x0,
     user_read = 0x1,
     gc_read = 0x2,
     sb_read = user_read | gc_read, // user or gc is reading
@@ -62,11 +63,11 @@ typedef struct page_map {
 // Contains data in log zone (page map) and data in data zone (block map)
 typedef struct logical_block {
     unsigned long long s_page_addr; // starting logical page address
+    uint8_t *bitmap;
     page_map *page_maps; // page mapping for this logical block (log zone)
     page_map *old_page_maps; // temporily store old page maps while gc
     page_map *page_maps_tail;
     zone_info *data_zone; // block mapping for this logical block (data zone)
-    uint8_t *bitmap;
     pthread_mutex_t lock;
 } logical_block;
 
@@ -90,6 +91,7 @@ typedef struct zns_info {
     pthread_mutex_t size_limit_lock;
     // logical block corresponding to each data zone
     logical_block *logical_blocks;
+    uint32_t bitmap_size;
     // current log zone
     zone_info *curr_log_zone;
     // used log zone
@@ -171,16 +173,18 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
     (*my_dev)->tparams.zns_zone_capacity = info->zone_num_pages *
                                            info->page_size;
     // set num_zones
-    nvme_zone_report zns_report;
+    unsigned zns_report_size = sizeof(nvme_zone_report) + sizeof(nvme_zns_desc);
+    nvme_zone_report *zns_report = (nvme_zone_report *)calloc(1UL,
+                                                              zns_report_size);
     ret = nvme_zns_mgmt_recv(info->fd, info->nsid, 0ULL,
                              NVME_ZNS_ZRA_REPORT_ZONES,
                              NVME_ZNS_ZRAS_REPORT_ALL, false,
-                             sizeof(zns_report), &zns_report);
+                             zns_report_size, zns_report);
     if (ret) {
         printf("Failed to report zones, ret %d\n", ret);
         return ret;
     }
-    info->num_zones = le64_to_cpu(zns_report.nr_zones);
+    info->num_zones = le64_to_cpu(zns_report->nr_zones);
     (*my_dev)->tparams.zns_num_zones = info->num_zones;
     // set num_log_zones
     info->num_log_zones = params->log_zones > 0 ? params->log_zones : 0U;
@@ -201,28 +205,6 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
     info->free_append_size = info->zasl;
     // initialise size_limit_lock
     pthread_mutex_init(&info->size_limit_lock, NULL);
-    // reset device
-    if (params->force_reset) {
-        ret = nvme_zns_mgmt_send(info->fd, info->nsid, 0ULL, true,
-                                 NVME_ZNS_ZSA_RESET, 0U, NULL);
-        if (ret) {
-            printf("Zone reset failed %d\n", ret);
-            return ret;
-        }
-    } else {
-        ;
-    }
-    // set log zone page mapped hashmap size to num_data_zones
-    info->logical_blocks = (logical_block *)calloc(info->num_data_zones,
-                                                   sizeof(logical_block));
-    for (uint32_t i = 0U; i < info->num_data_zones; ++i) {
-        info->logical_blocks[i].s_page_addr = i * info->zone_num_pages;
-        info->logical_blocks[i].bitmap = (uint8_t *)
-                                         calloc(((info->zone_num_pages - 1UL)
-                                                 >> 3UL) + 1UL,
-                                                sizeof(uint8_t));
-        pthread_mutex_init(&info->logical_blocks[i].lock, NULL);
-    }
     // set all zone to free_zones
     info->free_zones = (zone_info *)calloc(1UL, sizeof(zone_info));
     info->free_zones_tail = info->free_zones;
@@ -236,17 +218,49 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
         pthread_mutex_init(&info->free_zones_tail->num_valid_pages_lock, NULL);
         pthread_mutex_init(&info->free_zones_tail->write_ptr_lock, NULL);
     }
-    // set num_free_zones
-    info->num_free_zones = info->num_zones;
-    //Set current log zone to 0th zone
-    info->curr_log_zone = info->free_zones;
-    info->free_zones = info->free_zones->next;
-    if (!info->free_zones)
-        info->free_zones_tail = NULL;
-    info->curr_log_zone->next = NULL;
-    --info->num_free_zones;
-    // init zones_lock
-    pthread_mutex_init(&info->zones_lock, NULL);
+    // reset device
+    if (params->force_reset) {
+        free(zns_report);
+        ret = nvme_zns_mgmt_send(info->fd, info->nsid, 0ULL, true,
+                                 NVME_ZNS_ZSA_RESET, 0U, NULL);
+        if (ret) {
+            printf("Zone reset failed %d\n", ret);
+            return ret;
+        }
+        // set log zone page mapped hashmap size to num_data_zones
+        info->logical_blocks = (logical_block *)calloc(info->num_data_zones,
+                                                    sizeof(logical_block));
+        info->bitmap_size = ((info->zone_num_pages - 1U) >> 3U) + 1U;
+        for (uint32_t i = 0U; i < info->num_data_zones; ++i) {
+            info->logical_blocks[i].s_page_addr = i * info->zone_num_pages;
+            info->logical_blocks[i].bitmap = (uint8_t *)
+                                             calloc(info->bitmap_size,
+                                                    sizeof(uint8_t));
+            pthread_mutex_init(&info->logical_blocks[i].lock, NULL);
+        }
+        // set num_free_zones
+        info->num_free_zones = info->num_zones;
+        //Set current log zone to 0th zone
+        info->curr_log_zone = info->free_zones;
+        info->free_zones = info->free_zones->next;
+        if (!info->free_zones)
+            info->free_zones_tail = NULL;
+        info->curr_log_zone->next = NULL;
+        --info->num_free_zones;
+        // init zones_lock
+        pthread_mutex_init(&info->zones_lock, NULL);
+    } else {
+        uint32_t read_size = le64_to_cpu(zns_report->entries[0].wp) *
+                             info->page_size;
+        free(zns_report);
+        uint8_t *blocks_info = (uint8_t *)calloc(read_size, sizeof(uint8_t));
+        read_from_zns(info, 0ULL, blocks_info, read_size, dev_io);
+        nvme_zns_mgmt_send(info->fd, info->nsid, 0ULL, false,
+                           NVME_ZNS_ZSA_RESET, 0U, NULL);
+        uint8_t *ptr = blocks_info;
+        std::unordered_set<uint32_t> used_zones_index;
+        free(blocks_info);
+    }
     // set gc_wmark
     info->gc_wmark = params->gc_wmark > 0 ? params->gc_wmark : 0U;
     //Start GC
@@ -408,19 +422,41 @@ int deinit_ss_zns_device(user_zns_device *my_dev)
     pthread_mutex_unlock(&info->zones_lock);
     info->run_gc = false;
     pthread_join(info->gc_thread, NULL);
+    uint64_t block_info_size = info->bitmap_size + sizeof(uint8_t) +
+                               sizeof(zone_info::saddr) +
+                               sizeof(zone_info::write_ptr);
+    uint64_t append_size =  ((info->num_data_zones * block_info_size - 1UL) /
+                             info->page_size + 1UL) * info->page_size;
+    uint8_t *blocks_info = (uint8_t *)calloc(1UL, append_size);
+    uint8_t *ptr = blocks_info;
     logical_block *blocks = info->logical_blocks;
     // free hashmap
     for (uint32_t i = 0U; i < info->num_data_zones; ++i) {
+        memcpy(ptr, blocks[i].bitmap, info->bitmap_size);
+        free(blocks[i].bitmap);
+        ptr += info->bitmap_size;
 	    // Clear all log heads for a logical block
         if (blocks[i].data_zone) {
             pthread_mutex_destroy(&blocks[i].data_zone->num_valid_pages_lock);
             pthread_mutex_destroy(&blocks[i].data_zone->write_ptr_lock);
+            memset(ptr, 1, sizeof(uint8_t));
+            ptr += sizeof(uint8_t);
+            memcpy(ptr, &blocks[i].data_zone->saddr, sizeof(zone_info::saddr));
+            ptr += sizeof(zone_info::saddr);
+            memcpy(ptr, &blocks[i].data_zone->write_ptr,
+                   sizeof(zone_info::write_ptr));
+            ptr += sizeof(zone_info::write_ptr);
 	        free(blocks[i].data_zone);
+        } else {
+            ptr += sizeof(bool) + sizeof(zone_info::saddr) +
+                   sizeof(zone_info::write_ptr);
         }
-        free(blocks[i].bitmap);
         pthread_mutex_destroy(&blocks[i].lock);
     }
     free(blocks);
+    append_to_data_zone(info, info->free_zones,
+                        blocks_info, append_size, dev_io);
+    free(blocks_info);
     while (info->free_zones) {
         zone_info *tmp = info->free_zones;
         info->free_zones = info->free_zones->next;

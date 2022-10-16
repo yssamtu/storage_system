@@ -20,7 +20,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  */
 
-#include <cassert>
+#include <cinttypes>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <iomanip>
@@ -216,7 +217,7 @@ int show_zns_zone_status(const int &fd, const unsigned &nsid,
                           num_zones * sizeof(nvme_zns_desc);
     std::unique_ptr<char []> zone_reports(new char[total_size]());
     ret = nvme_zns_mgmt_recv(fd, nsid, 0ULL, NVME_ZNS_ZRA_REPORT_ZONES,
-                             NVME_ZNS_ZRAS_REPORT_ALL, true,
+                             NVME_ZNS_ZRAS_REPORT_ALL, false,
                              total_size, zone_reports.get());
     if (ret) {
         std::cerr <<  "failed to report zones, ret " << ret << std::endl;
@@ -263,8 +264,8 @@ int ss_nvme_device_io_with_mdts(const int &fd, const unsigned &nsid,
 {
     //FIXME:
     while (buf_size) {
-        unsigned size = buf_size < (mdts_size - 2U) * lba_size ?
-                        buf_size : (mdts_size - 2U) * lba_size;
+        unsigned size = buf_size < (mdts_size - 1U) * lba_size ?
+                        buf_size : (mdts_size - 1U) * lba_size;
         unsigned short no_blocks = size / lba_size;
         if (read)
             ss_nvme_device_read(fd, nsid, slba, no_blocks, buffer, size);
