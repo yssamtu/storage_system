@@ -183,7 +183,7 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
     info->num_zones = le64_to_cpu(zns_report.nr_zones);
     (*my_dev)->tparams.zns_num_zones = info->num_zones;
     // set num_log_zones
-    info->num_log_zones = params->log_zones;
+    info->num_log_zones = params->log_zones > 0 ? params->log_zones : 0U;
     // set num_data_zones = num_zones - num_log_zones
     info->num_data_zones = info->num_zones - info->num_log_zones;
     // set user capacity bytes = num_data_zones * zone_capacity
@@ -248,7 +248,7 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
     // init zones_lock
     pthread_mutex_init(&info->zones_lock, NULL);
     // set gc_wmark
-    info->gc_wmark = params->gc_wmark;
+    info->gc_wmark = params->gc_wmark > 0 ? params->gc_wmark : 0U;
     //Start GC
     info->run_gc = true;
     pthread_create(&info->gc_thread, NULL, &garbage_collection, info);
