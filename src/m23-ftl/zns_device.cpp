@@ -25,7 +25,6 @@ SOFTWARE.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <unordered_set>
 #include <libnvme.h>
 #include <pthread.h>
 #include "zns_device.h"
@@ -209,7 +208,11 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
     info->free_append_size = info->zasl;
     // initialise size_limit_lock
     pthread_mutex_init(&info->size_limit_lock, NULL);
-    std::unordered_set<uint32_t> used_zones_index;
+    // std::unordered_set<uint32_t> used_zones_index;
+    uint8_t *used_zones_index = (uint8_t *)
+                                calloc(((info->num_zones - 1U) >> 3U) + 1U,
+                                       sizeof(uint8_t));
+    uint32_t num_used_zones = 0U;
     // set log zone page mapped hashmap size to num_data_zones
     info->logical_blocks = (logical_block *)calloc(info->num_data_zones,
                                                    sizeof(logical_block));
@@ -262,8 +265,10 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
                 pthread_mutex_init(&block->data_zone->num_valid_pages_lock,
                                    NULL);
                 pthread_mutex_init(&block->data_zone->write_ptr_lock, NULL);
-                used_zones_index.emplace(block->data_zone->saddr /
-                                         info->zone_num_pages);
+                write_bitmap(used_zones_index,
+                             block->data_zone->saddr / info->zone_num_pages,
+                             1U);
+                ++num_used_zones;
             } else {
                 ptr += sizeof(uint8_t) + sizeof(zone_info::saddr) +
                        sizeof(zone_info::write_ptr);
@@ -278,7 +283,7 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
     pthread_mutex_init(&info->free_zones->num_valid_pages_lock, NULL);
     pthread_mutex_init(&info->free_zones->write_ptr_lock, NULL);
     for (uint32_t i = 1U; i < info->num_zones; ++i) {
-        if (!used_zones_index.count(i)) {
+        if (!read_bitmap(used_zones_index, i, 1U)) {
             info->free_zones_tail->next = (zone_info *)
                                           calloc(1UL, sizeof(zone_info));
             info->free_zones_tail = info->free_zones_tail->next;
@@ -289,8 +294,9 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
                                NULL);
         }
     }
+    free(used_zones_index);
     // set num_free_zones
-    info->num_free_zones = info->num_zones - used_zones_index.size();
+    info->num_free_zones = info->num_zones - num_used_zones;
     //Set current log zone to 0th zone
     info->curr_log_zone = info->free_zones;
     info->free_zones = info->free_zones->next;
