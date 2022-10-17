@@ -208,7 +208,6 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
     info->free_append_size = info->zasl;
     // initialise size_limit_lock
     pthread_mutex_init(&info->size_limit_lock, NULL);
-    // std::unordered_set<uint32_t> used_zones_index;
     uint8_t *used_zones_index = (uint8_t *)
                                 calloc(((info->num_zones - 1U) >> 3U) + 1U,
                                        sizeof(uint8_t));
@@ -221,7 +220,7 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
         // reset device
         if (params->force_reset) {
             ret = nvme_zns_mgmt_send(info->fd, info->nsid, 0ULL, true,
-                                    NVME_ZNS_ZSA_RESET, 0U, NULL);
+                                     NVME_ZNS_ZSA_RESET, 0U, NULL);
             if (ret) {
                 printf("Zone reset failed %d\n", ret);
                 return ret;
@@ -257,11 +256,12 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
             if (*ptr) {
                 ptr += sizeof(uint8_t);
                 block->data_zone = (zone_info *)calloc(1UL, sizeof(zone_info));
-                memcpy(&block->data_zone->saddr, ptr, sizeof(zone_info::saddr));
-                ptr += sizeof(zone_info::saddr);
+                memcpy(&block->data_zone->saddr, ptr,
+                       sizeof(unsigned long long));
+                ptr += sizeof(unsigned long long);
                 memcpy(&block->data_zone->write_ptr, ptr,
-                       sizeof(zone_info::write_ptr));
-                ptr += sizeof(zone_info::write_ptr);
+                       sizeof(uint32_t));
+                ptr += sizeof(uint32_t);
                 pthread_mutex_init(&block->data_zone->num_valid_pages_lock,
                                    NULL);
                 pthread_mutex_init(&block->data_zone->write_ptr_lock, NULL);
@@ -270,8 +270,8 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
                              1U);
                 ++num_used_zones;
             } else {
-                ptr += sizeof(uint8_t) + sizeof(zone_info::saddr) +
-                       sizeof(zone_info::write_ptr);
+                ptr += sizeof(uint8_t) + sizeof(unsigned long long) +
+                       sizeof(uint32_t);
             }
             pthread_mutex_init(&block->lock, NULL);
         }
@@ -480,8 +480,8 @@ int deinit_ss_zns_device(user_zns_device *my_dev)
     info->run_gc = false;
     pthread_join(info->gc_thread, NULL);
     uint64_t block_info_size = info->bitmap_size + sizeof(uint8_t) +
-                               sizeof(zone_info::saddr) +
-                               sizeof(zone_info::write_ptr);
+                               sizeof(unsigned long long) +
+                               sizeof(uint32_t);
     uint64_t append_size =  ((info->num_data_zones * block_info_size - 1UL) /
                              info->page_size + 1UL) * info->page_size;
     uint8_t *blocks_info = (uint8_t *)calloc(1UL, append_size);
@@ -498,15 +498,16 @@ int deinit_ss_zns_device(user_zns_device *my_dev)
             pthread_mutex_destroy(&blocks[i].data_zone->write_ptr_lock);
             memset(ptr, 1, sizeof(uint8_t));
             ptr += sizeof(uint8_t);
-            memcpy(ptr, &blocks[i].data_zone->saddr, sizeof(zone_info::saddr));
-            ptr += sizeof(zone_info::saddr);
+            memcpy(ptr, &blocks[i].data_zone->saddr,
+                   sizeof(unsigned long long));
+            ptr += sizeof(unsigned long long);
             memcpy(ptr, &blocks[i].data_zone->write_ptr,
-                   sizeof(zone_info::write_ptr));
-            ptr += sizeof(zone_info::write_ptr);
+                   sizeof(uint32_t));
+            ptr += sizeof(uint32_t);
 	        free(blocks[i].data_zone);
         } else {
-            ptr += sizeof(uint8_t) + sizeof(zone_info::saddr) +
-                   sizeof(zone_info::write_ptr);
+            ptr += sizeof(uint8_t) + sizeof(unsigned long long) +
+                   sizeof(uint32_t);
         }
         pthread_mutex_destroy(&blocks[i].lock);
     }
