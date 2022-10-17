@@ -615,7 +615,7 @@ static void update_page_map(zns_info *info, unsigned long long page_addr,
                             unsigned long long physical_addr,
                             uint32_t num_pages)
 {
-    while (num_pages--) {
+    for (; num_pages--; ++page_addr, ++physical_addr) {
         uint32_t index = get_block_index(page_addr, info->zone_num_pages);
         logical_block *block = &info->logical_blocks[index];
         //Lock for updating page map
@@ -627,7 +627,7 @@ static void update_page_map(zns_info *info, unsigned long long page_addr,
             block->page_maps->physical_addr = physical_addr;
             block->page_maps->zone = info->curr_log_zone;
             pthread_mutex_unlock(&block->lock);
-            return;
+            continue;
         }
         if (block->page_maps->page_addr == page_addr) {
             //Update log counter
@@ -635,7 +635,7 @@ static void update_page_map(zns_info *info, unsigned long long page_addr,
             block->page_maps->physical_addr = physical_addr;
             block->page_maps->zone = info->curr_log_zone;
             pthread_mutex_unlock(&block->lock);
-            return;
+            continue;
         }
         if (block->page_maps->page_addr > page_addr) {
             page_map *tmp = (page_map *)calloc(1, sizeof(page_map));
@@ -645,17 +645,24 @@ static void update_page_map(zns_info *info, unsigned long long page_addr,
             tmp->physical_addr = physical_addr;
             tmp->zone = info->curr_log_zone;
             pthread_mutex_unlock(&block->lock);
-            return;
+            continue;
         }
-        page_map *ptr = block->page_maps;
-        while (ptr->next) {
-            if (ptr->next->page_addr == page_addr) {
+        for (page_map *ptr = block->page_maps; ; ptr = ptr->next) {
+            if (!ptr->next) {
+                ptr->next = (page_map *)calloc(1, sizeof(page_map));
+                block->page_maps_tail = ptr->next;
+                ptr->next->page_addr = page_addr;
+                ptr->next->physical_addr = physical_addr;
+                ptr->next->zone = info->curr_log_zone;
+                pthread_mutex_unlock(&block->lock);
+                break;
+            } else if (ptr->next->page_addr == page_addr) {
                 //Update log counter
                 decrease_num_valid_page(ptr->next->zone, 1U);
                 ptr->next->physical_addr = physical_addr;
                 ptr->next->zone = info->curr_log_zone;
                 pthread_mutex_unlock(&block->lock);
-                return;
+                break;
             } else if (ptr->next->page_addr > page_addr) {
                 page_map *tmp =  (page_map *)calloc(1, sizeof(page_map));
                 tmp->next = ptr->next;
@@ -664,18 +671,9 @@ static void update_page_map(zns_info *info, unsigned long long page_addr,
                 tmp->physical_addr = physical_addr;
                 tmp->zone = info->curr_log_zone;
                 pthread_mutex_unlock(&block->lock);
-                return;
+                break;
             }
-            ptr = ptr->next;
         }
-        ptr->next = (page_map *)calloc(1, sizeof(page_map));
-        block->page_maps_tail = ptr->next;
-        ptr->next->page_addr = page_addr;
-        ptr->next->physical_addr = physical_addr;
-        ptr->next->zone = info->curr_log_zone;
-        pthread_mutex_unlock(&block->lock);
-        ++page_addr;
-        ++physical_addr;
     }
 }
 
