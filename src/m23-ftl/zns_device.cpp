@@ -259,8 +259,7 @@ int init_ss_zns_device(zdev_init_params *params, user_zns_device **my_dev)
                 memcpy(&block->data_zone->saddr, ptr,
                        sizeof(unsigned long long));
                 ptr += sizeof(unsigned long long);
-                memcpy(&block->data_zone->write_ptr, ptr,
-                       sizeof(uint32_t));
+                memcpy(&block->data_zone->write_ptr, ptr, sizeof(uint32_t));
                 ptr += sizeof(uint32_t);
                 pthread_mutex_init(&block->data_zone->num_valid_pages_lock,
                                    NULL);
@@ -480,8 +479,7 @@ int deinit_ss_zns_device(user_zns_device *my_dev)
     info->run_gc = false;
     pthread_join(info->gc_thread, NULL);
     uint64_t block_info_size = info->bitmap_size + sizeof(uint8_t) +
-                               sizeof(unsigned long long) +
-                               sizeof(uint32_t);
+                               sizeof(unsigned long long) + sizeof(uint32_t);
     uint64_t append_size =  ((info->num_data_zones * block_info_size - 1UL) /
                              info->page_size + 1UL) * info->page_size;
     uint8_t *blocks_info = (uint8_t *)calloc(1UL, append_size);
@@ -501,8 +499,7 @@ int deinit_ss_zns_device(user_zns_device *my_dev)
             memcpy(ptr, &blocks[i].data_zone->saddr,
                    sizeof(unsigned long long));
             ptr += sizeof(unsigned long long);
-            memcpy(ptr, &blocks[i].data_zone->write_ptr,
-                   sizeof(uint32_t));
+            memcpy(ptr, &blocks[i].data_zone->write_ptr, sizeof(uint32_t));
             ptr += sizeof(uint32_t);
 	        free(blocks[i].data_zone);
         } else {
