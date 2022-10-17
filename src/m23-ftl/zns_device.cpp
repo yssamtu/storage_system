@@ -473,6 +473,7 @@ int deinit_ss_zns_device(user_zns_device *my_dev)
         else
             info->free_zones = info->curr_log_zone;
         info->free_zones_tail = info->curr_log_zone;
+        info->curr_log_zone = NULL;
         ++info->num_free_zones;
         pthread_mutex_unlock(&info->zones_lock);
     }
